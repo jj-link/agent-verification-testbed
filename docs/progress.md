@@ -47,3 +47,44 @@ blockers, and the next action in line with the plan.
 
 Stage 2 — inspect and pin the Terminal-Bench and Harbor integrations, and run
 one official baseline task through the official grader.
+
+---
+
+## Stage 2 — Terminal-Bench / Harbor integration
+
+**Status:** complete.
+
+### Work
+
+- Identified the official stack: Harbor (`harbor-framework/harbor`) as the
+  harness and Terminal-Bench 2.0 (`laude-institute/terminal-bench-2`) as the
+  dataset.
+- Pinned Harbor `0.22.0` (source commit `4407eb52`) in the project's `tbench`
+  extra; the `terminal-bench@2.0` dataset resolves to commit `69671fba`.
+- Selected baseline task `cancel-async-tasks` (without consulting outcomes).
+- Ran it through the official oracle agent; graded reward `1.0`.
+- Reproduced the run through the pinned project env.
+- Documented the integration and output format in
+  `docs/terminal-bench-integration.md`; recorded pins in `.env.example`.
+
+### Decisions
+
+- Harbor requires Python >= 3.12, so it is a `[project.optional-dependencies]`
+  `tbench` extra with a `python_version >= '3.12'` marker; the base package
+  keeps `requires-python >= 3.11` and ordinary CI stays free of Harbor.
+- No paid API is needed for the oracle baseline; it runs on local Docker.
+
+### Checks
+
+- `uv run harbor --version` → `0.22.0`.
+- Oracle run: 1 trial, 0 errors, reward `1.0` (two independent runs).
+- Docker Desktop running locally for task containers.
+
+### Commit
+
+- `a0c2d75` (previous); Stage 2 commit to follow.
+
+### Next action
+
+Stage 3 — inspect the local Qwen deployment and record exact model, server, and
+hardware identity.

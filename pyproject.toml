@@ -11,6 +11,11 @@ dependencies = []
 [project.scripts]
 avt = "avt.cli:main"
 
+[project.optional-dependencies]
+tbench = [
+    "harbor==0.22.0; python_version >= '3.12'",
+]
+
 [dependency-groups]
 dev = [
     "mypy>=1.14,<2",
