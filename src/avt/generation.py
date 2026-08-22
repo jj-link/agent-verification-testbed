@@ -126,6 +126,10 @@ class _HarborRunner:
             "1",
             "-k",
             "1",
+        ]
+        if config.generator.agent_timeout_multiplier > 1:
+            cmd += ["--agent-timeout-multiplier", str(config.generator.agent_timeout_multiplier)]
+        cmd += [
             "--mounts",
             mounts,
             "--ae",

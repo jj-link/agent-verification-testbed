@@ -51,6 +51,7 @@ class Generator:
     endpoint: str
     temperature: float
     max_tokens: int
+    agent_timeout_multiplier: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,9 @@ def load_config(path: str | Path) -> Config:
             endpoint=_str(gen, "endpoint"),
             temperature=_float(gen, "temperature"),
             max_tokens=_int(gen, "max_tokens"),
+            agent_timeout_multiplier=_float(gen, "agent_timeout_multiplier")
+            if "agent_timeout_multiplier" in gen
+            else 1.0,
         ),
         verifier=Verifier(
             model=_str(ver, "model"),
