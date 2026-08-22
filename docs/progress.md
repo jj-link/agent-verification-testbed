@@ -202,9 +202,54 @@ complete, officially graded local trajectory.
 
 ### Commit
 
-- `65b3dc1` (previous); Stage 5 commit to follow.
+- `58fa6f9` — `feat(generation): connect Qwen actor via Harbor qwen-coder
+  (reward 1.0)`.
 
 ### Next action
 
 Stage 6 — implement storage and deterministic identifiers (two DBs and an
 artifact store; records survive restart and resume).
+
+---
+
+## Stage 6 — Storage and deterministic identifiers
+
+**Status:** complete.
+
+### Work
+
+- Implemented deterministic content-addressed identifiers
+  (`src/avt/storage/ids.py`) with order-independent canonical serialization.
+- Created the experiment catalog DB (`experiment.sqlite`) and the isolated
+  ground-truth DB (`ground_truth.sqlite`) with foreign-key enforcement.
+- Created the filesystem artifact store with atomic (temp+rename) writes.
+- Implemented resumable job state with crash recovery of RUNNING jobs and
+  atomic single-statement claiming.
+
+### Decisions
+
+- `pairs` stores only canonical unordered membership; A/B display order lives
+  per `verifications` row (so a pair can be presented in either order for
+  position-sensitivity runs).
+- Foreign keys are enforced per connection (`PRAGMA foreign_keys=ON`).
+- Crash-left `RUNNING` jobs are reclaimed to `RETRYABLE_FAILED` by an explicit
+  `Catalog.recover_interrupted()` at controller startup — never implicitly on
+  every connection open.
+- `claim_job` is a single conditional UPDATE (`BEGIN IMMEDIATE`) so concurrent
+  claims cannot both win.
+- Ground truth is stored in a separate file never opened by verification.
+
+### Checks
+
+- `uv run pytest -q` — 13 passed (IDs, persistence across reopen, atomic
+  claims, crash recovery + resume without duplicate rows, artifact writes).
+- `uv run ruff check .` / `ruff format --check .` / `mypy .` — clean.
+
+### Commit
+
+- `58fa6f9` (previous); Stage 6 commit to follow.
+
+### Next action
+
+Stage 7 — implement candidate generation (resumable generation jobs yielding
+three usable candidates per smoke task).
