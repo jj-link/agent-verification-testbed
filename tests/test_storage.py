@@ -130,3 +130,25 @@ def test_artifact_store_writes_json_files(tmp_path: Path) -> None:
     assert vr["scores"].exists()
     res = store.write_official_result("cand1", {"reward": 1.0})
     assert res.exists()
+
+
+def test_record_candidate_indexes_pool_and_is_idempotent(tmp_path: Path) -> None:
+    c = Catalog(tmp_path / "experiment.sqlite")
+    exp = experiment_id(EXP_CONFIG)
+    with c.connect() as scoped:
+        scoped.upsert_experiment_config(exp, EXP_CONFIG, stage="GENERATING")
+        scoped.record_candidate("c1", exp, "task", 0, "SUCCEEDED", "candidates/c1", '{"a":1}')
+        # Re-record (resume/retry) must not duplicate the manifest row.
+        scoped.record_candidate("c1", exp, "task", 0, "SUCCEEDED", "candidates/c1b", '{"a":1}')
+        cnt = scoped._conn.execute(
+            "SELECT COUNT(*) FROM candidates WHERE candidate_id='c1'"
+        ).fetchone()[0]
+        assert cnt == 1
+        art = scoped._conn.execute(
+            "SELECT artifact_path FROM candidates WHERE candidate_id='c1'"
+        ).fetchone()[0]
+        assert art == "candidates/c1b"
+    # Pool is discoverable as an immutable manifest.
+    with c.connect() as scoped:
+        n = scoped._conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0]
+    assert n == 1

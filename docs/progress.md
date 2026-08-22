@@ -255,11 +255,11 @@ artifact store; records survive restart and resume).
 Stage 7 — implement candidate generation (resumable generation jobs yielding
 three usable candidates per smoke task).
 
----
-
 ## Stage 7 — Candidate generation
 
-**Status:** implementation complete (committed); smoke candidate run not yet finished.
+**Status:** implementation complete (committed); smoke candidate run in progress
+(live 4-way parallel on the x86_64 workstation Docker; every candidate's model
+calls hit the spark1 endpoint).
 
 ### Work
 
@@ -272,28 +272,43 @@ three usable candidates per smoke task).
   subprocess env, and configurable agent-timeout multiplier.
 - Added `avt select-tasks`, `avt generate`; selected smoke tasks
   `distribution-search`, `path-tracing-reverse` (seed 42).
+- Indexed each graded candidate in the frozen-pool manifest (`candidates`
+  catalog table, with an ensured experiment row) so the Stage 8 pair builder can
+  discover the pool; the write is idempotent, tested, and backfilled for
+  candidates that succeeded before the fix.
+- Verified and documented the execution-host constraint: the DGX Spark hosts
+  (`spark1`/`spark2`/`spark3`) are `aarch64`, but the Terminal-Bench prebuilt
+  task image we probed (`cancel-async-tasks`) is `linux/amd64` only; a Harbor
+  trial on spark1 fails at environment start with a platform mismatch. Harbor
+  generation therefore runs on the x86_64 workstation; the Spark hosts serve the
+  model only. See `docs/terminal-bench-integration.md`.
 
 ### Checks
 
-- 22 tests pass; ruff/mypy clean.
+- 25 tests pass; ruff check/format clean, mypy clean.
 - Generation job lifecycle (retry, resume, reuse, timeout rejection) covered.
+- Candidate-manifest indexing covered (success is indexed; a never-graded
+  candidate is not).
 
-### Findings / blockers for completion
+### Findings / blockers
 
-- The selected smoke tasks are hard (expert ~120 min); the local 27B actor
-  exceeds the default 900 s agent timeout, so candidates time out before a
-  grade. A 3× agent-timeout multiplier was added, but the 3-candidate × 2-task
-  smoke run is a multi-hour job and recurring orphaned Harbor trial containers
-  caused contention.
-- The three-candidates-per-smoke-task acceptance is therefore **not yet met**
-  pending a completed background run.
+- The selected smoke tasks are expert-difficulty; the 27B actor exceeds the
+  default agent timeout. A no-practical timeout (`timeout_multiplier` large) is
+  used so candidates run to a graded finish.
+- Smoke progress so far: `distribution-search` attempts 0 and 1 graded
+  `reward 1.0`; the remaining four candidates (including all three
+  `path-tracing-reverse`) are still running. The three-candidates-per-smoke-task
+  acceptance is **not yet met** pending the finished live run.
 
 ### Commit
 
 - `6b079cc`, `87eb8b9` (Stage 6/7 init), `6e4d949` (reclaim fix),
-  `57f4063` (UTF-8 fix), `ec86d06` (timeout multiplier).
+  `57f4063` (UTF-8 fix), `ec86d06` (timeout multiplier), `60e5f4e` (parallel
+  with no practical timeout), `1633fdf` (Stage-7 status docs).
+- (manifest-indexing fix and this status update are in the current working
+  commit)
 
 ### Next action
 
-Complete the smoke candidate generation run (multi-hour, resumable) to yield
-three usable candidates per smoke task, then proceed to Stage 8.
+Finish the running smoke generation (multi-hour, resumable) to yield three
+usable candidates per smoke task, then proceed to Stage 8.

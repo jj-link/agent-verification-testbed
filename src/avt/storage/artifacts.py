@@ -38,6 +38,10 @@ class ArtifactStore:
             if os.path.exists(tmp):
                 os.remove(tmp)
 
+    def candidate_base_dir(self, candidate_id: str) -> Path:
+        """Content-addressed artifact directory for a candidate."""
+        return self.artifacts_dir / "candidates" / candidate_id
+
     def write_candidate(
         self,
         candidate_id: str,
@@ -45,7 +49,7 @@ class ArtifactStore:
         trajectory: object,
         usage: object,
     ) -> dict[str, Path]:
-        base = self.artifacts_dir / "candidates" / candidate_id
+        base = self.candidate_base_dir(candidate_id)
         manifest_p = base / "manifest.json"
         trajectory_p = base / "trajectory.json"
         usage_p = base / "usage.json"

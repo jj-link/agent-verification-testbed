@@ -172,3 +172,42 @@ def test_generate_all_reclaims_crash_left_running(tmp_path: Path) -> None:
     assert results[0].reward == 1.0
     with service.catalog.connect() as scoped:
         assert scoped.count_jobs("candidate", "SUCCEEDED") == 1
+
+
+def test_success_indexes_candidate_manifest(tmp_path: Path) -> None:
+    """A graded candidate must be indexed in the frozen-pool manifest for Stage 8."""
+    service, _ = _make_service(tmp_path)
+
+    def fake_run(config: object, task_id: str, attempt: int, out_dir: Path, job_name: str) -> Path:
+        _write_trial(out_dir / job_name, reward=1.0)
+        return out_dir / job_name
+
+    service.runner.run = fake_run  # type: ignore[method-assign]
+    res = service.generate_one("task_x", 0)
+    assert res.reward == 1.0
+    with service.catalog.connect() as scoped:
+        row = scoped._conn.execute(
+            "SELECT experiment_id, task_id, attempt_index, status, artifact_path FROM candidates"
+        ).fetchone()
+    assert row is not None, "candidate not indexed in catalog manifest"
+    assert row[0] == service.experiment_id()
+    assert (row[1], row[2], row[3]) == ("task_x", 0, "SUCCEEDED")
+    cand = cid(service.experiment_id(), "task_x", 0)
+    assert row[4] is not None and "candidates" in row[4] and row[4].endswith(cand)
+    assert Path(row[4]).is_dir()
+    with service.catalog.connect() as scoped:
+        assert scoped.get_experiment_stage(service.experiment_id()) == "GENERATING"
+
+
+def test_a_timed_out_trial_is_not_indexed(tmp_path: Path) -> None:
+    """A candidate that never grades must not appear in the frozen-pool manifest."""
+    service, _ = _make_service(tmp_path)
+
+    def fake_run(config: object, task_id: str, attempt: int, out_dir: Path, job_name: str) -> Path:
+        raise InfrastructureFailure("always fails")
+
+    service.runner.run = fake_run  # type: ignore[method-assign]
+    with pytest.raises(InfrastructureFailure):
+        service.generate_one("task_x", 0)
+    with service.catalog.connect() as scoped:
+        assert scoped._conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0] == 0

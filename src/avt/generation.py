@@ -275,15 +275,31 @@ class GenerationService:
         reward: float | None,
         job_dir: Path,
     ) -> None:
+        usage = {"attempt": attempt, "task": task_id, "harness": self.config.generator.harness}
         self.artifacts.write_candidate(
             cand,
             {"task": task_id, "attempt": attempt},
             {"trial_result": str(trial), "job_dir": str(job_dir)},
-            {"attempt": attempt, "task": task_id, "harness": self.config.generator.harness},
+            usage,
         )
         self.artifacts.write_official_result(cand, {"reward": reward, "source": str(trial)})
         with self.ground_truth.connect() as g:
             g.put(cand, task_id, reward, {"reward": reward})
+        # Index the frozen-pool manifest so the pair builder can discover the pool.
+        artifact_path = str(self.artifacts.candidate_base_dir(cand))
+        with self.catalog.connect() as scoped:
+            scoped.upsert_experiment_config(
+                self.experiment_id(), self.config.raw, stage="GENERATING"
+            )
+            scoped.record_candidate(
+                cand,
+                self.experiment_id(),
+                task_id,
+                attempt,
+                "SUCCEEDED",
+                artifact_path,
+                json.dumps(usage, sort_keys=True),
+            )
 
     def generate_all(self) -> list[CandidateResult]:
         # Controller startup: reclaim any crash-left RUNNING jobs so they resume

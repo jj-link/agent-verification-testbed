@@ -66,4 +66,31 @@ run.
 - `verifier/reward.txt`, `verifier/test-stdout.txt`, `verifier/ctrf.json`.
 - `agent/` holds the agent's own artifact; the oracle leaves no trajectory.
 
-These shapes feed the Stage 6+ AVT storage/ground-truth schema design.
+## Host platform constraint (verified)
+
+Terminal-Bench 2.0 task environments are prebuilt container images. The one we
+probed, `alexgshaw/cancel-async-tasks:20251031`, is published as
+**`linux/amd64`** only (single-arch; no `arm64` manifest). The qwen-code actor
+runs *inside* the task environment image (Node + npm are installed in-container
+during agent setup), so it is architecture-bound to the task image's platform.
+
+The DGX Spark hosts (`spark1`/`spark2`/`spark3`, NVIDIA GB10) are **`aarch64`**
+(`uname -m` → `aarch64`). A Harbor trial on spark1 fails at environment start:
+
+```
+The requested image's platform (linux/amd64) does not match the detected host
+platform (linux/arm64/v8) and no specific platform was requested
+Container cancel-async-tasks__<trial>__env-main-1 exited (255)
+```
+
+Verified directly: `alexgshaw/cancel-async-tasks:20251031` reports
+`amd64/linux` and has no arm64 variant; an oracle probe job on spark1 errored
+with the platform mismatch above.
+
+Consequence: official Harbor generation must run on an **x86_64 Docker host**;
+the Spark machines serve the model, not the trial containers. AVT keeps
+generation on the x86_64 workstation Docker, parallelized with
+`experiment.max_parallel` (4 for the smoke run), and points every candidate's
+model calls at the spark1 endpoint. QEMU `qemu-x86_64` emulation is
+registerable on the Spark hosts, but running multi-hour agent+environment
+containers under emulation is not viable for the study and is not used.

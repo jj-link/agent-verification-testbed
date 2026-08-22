@@ -146,6 +146,44 @@ class CatalogConnection:
         ).fetchone()
         return int(row[0])
 
+    def record_candidate(
+        self,
+        candidate_id: str,
+        experiment_id: str,
+        task_id: str,
+        attempt_index: int,
+        status: str,
+        artifact_path: str | None,
+        generator_usage: str | None,
+    ) -> None:
+        """Upsert a generated candidate into the frozen-pool manifest.
+
+        The experiment row must already exist (callers ensure it via
+        ``upsert_experiment_config``); the FK to ``experiments`` is enforced per
+        connection. Re-running is idempotent: terminal state, artifact path, and
+        usage are refreshed on conflict, so resume/retry never duplicates rows.
+        """
+        self._conn.execute(
+            "INSERT INTO candidates("
+            "candidate_id, experiment_id, task_id, attempt_index, status, "
+            "artifact_path, generator_usage, created_at) "
+            "VALUES(?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(candidate_id) DO UPDATE SET "
+            "status=excluded.status, artifact_path=excluded.artifact_path, "
+            "generator_usage=excluded.generator_usage",
+            (
+                candidate_id,
+                experiment_id,
+                task_id,
+                attempt_index,
+                status,
+                artifact_path,
+                generator_usage,
+                _now(),
+            ),
+        )
+        self._conn.commit()
+
 
 class Catalog:
     """Owns the experiment catalog database file and opens connections."""
