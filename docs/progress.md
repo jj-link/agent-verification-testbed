@@ -40,7 +40,8 @@ blockers, and the next action in line with the plan.
 
 ### Commit
 
-- `35b0a8d` (previous docs-only init); Stage 1 foundation commit to follow.
+- `35b0a8d` (docs-only init).
+- `a0c2d75` — `feat: add AVT package, CLI, CI, and documentation foundation`.
 
 ### Next action
 
