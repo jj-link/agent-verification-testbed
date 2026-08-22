@@ -99,6 +99,17 @@ CREATE TABLE IF NOT EXISTS verifications (
     FOREIGN KEY (pair_id) REFERENCES pairs(pair_id)
 );
 
+CREATE TABLE IF NOT EXISTS expected_scores (
+    candidate_id        TEXT NOT NULL,
+    criterion           TEXT NOT NULL,
+    raw_expected_score  REAL NOT NULL,
+    normalized_score    REAL NOT NULL,
+    observations        INTEGER NOT NULL,
+    created_at          TEXT NOT NULL,
+    PRIMARY KEY (candidate_id, criterion),
+    FOREIGN KEY (candidate_id) REFERENCES candidates(candidate_id)
+);
+
 CREATE TABLE IF NOT EXISTS rankings (
     ranking_id      TEXT PRIMARY KEY,
     task_id         TEXT NOT NULL,

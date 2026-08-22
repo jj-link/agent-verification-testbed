@@ -301,6 +301,52 @@ class CatalogConnection:
         )
         self._conn.commit()
 
+    def record_expected_score(
+        self,
+        candidate_id_: str,
+        criterion: str,
+        raw_expected_score: float,
+        normalized_score: float,
+        observations: int,
+    ) -> None:
+        """Record a continuous expected score immutably (no-op if identical)."""
+        row = self._conn.execute(
+            "SELECT criterion, raw_expected_score, normalized_score, observations "
+            "FROM expected_scores WHERE candidate_id=? AND criterion=?",
+            (candidate_id_, criterion),
+        ).fetchone()
+        incoming = (criterion, raw_expected_score, normalized_score, observations)
+        if row is not None:
+            current = (row[0], row[1], row[2], row[3])
+            if current != incoming:
+                raise ValueError(
+                    f"expected-score conflict for {candidate_id_!r}/{criterion!r}: "
+                    f"existing {current!r} vs new {incoming!r}"
+                )
+            return
+        self._conn.execute(
+            "INSERT INTO expected_scores(candidate_id, criterion, raw_expected_score, "
+            "normalized_score, observations, created_at) VALUES(?,?,?,?,?,?)",
+            (candidate_id_, criterion, raw_expected_score, normalized_score, observations, _now()),
+        )
+        self._conn.commit()
+
+    def list_expected_scores(self, candidate_id_: str) -> list[dict[str, object]]:
+        rows = self._conn.execute(
+            "SELECT criterion, raw_expected_score, normalized_score, observations "
+            "FROM expected_scores WHERE candidate_id=? ORDER BY criterion",
+            (candidate_id_,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_verifications(self) -> list[dict[str, object]]:
+        rows = self._conn.execute(
+            "SELECT verification_id, pair_id, criterion, repetition, display_order, "
+            "status, request_path, response_path, scores_path FROM verifications "
+            "ORDER BY pair_id, criterion"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def list_pairs(self, experiment_id: str, task_id: str) -> list[dict[str, object]]:
         rows = self._conn.execute(
             "SELECT pair_id, candidate_a, candidate_b, status FROM pairs "

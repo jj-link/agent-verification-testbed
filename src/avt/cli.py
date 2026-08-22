@@ -30,6 +30,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_verify = sub.add_parser("verify-pairs", help="run the discrete judge over pairs")
     p_verify.add_argument("--config", required=True, help="experiment config path")
 
+    p_exp = sub.add_parser("expected-scores", help="compute continuous expected scores")
+    p_exp.add_argument("--config", required=True, help="experiment config path")
+
     return parser
 
 
@@ -99,6 +102,15 @@ def main(argv: list[str] | None = None) -> int:
         judge = DiscreteJudge(cfg, Path.cwd())
         scores = judge.verify_all()
         print(f"verified {len(scores)} pair-scores")
+        return 0
+
+    if args.command == "expected-scores":
+        from avt.config import load_config
+        from avt.expected import ContinuousVerifier
+
+        cfg = load_config(args.config)
+        recs = ContinuousVerifier(cfg, Path.cwd()).compute()
+        print(f"expected-score records: {len(recs)}")
         return 0
 
     parser.error(f"unknown command: {args.command}")

@@ -477,7 +477,47 @@ ruff/mypy clean).
 - Stage 9: `src/avt/verification.py`, `src/avt/storage/catalog.py`
   (`record_verification`), `src/avt/cli.py` (`verify-pairs`), tests.
 
+## Stage 10 — Continuous Qwen verifier
+
+**Status:** complete. Math and logprob tests pass; expected-score records
+computed for the frozen pool.
+
+### Work
+
+- `src/avt/expected.py`: `ContinuousVerifier` — a deterministic offline pass
+  over the immutable discrete-judge response artifacts (no new model calls).
+  For each (candidate, criterion) it aggregates the renormalized label
+  distribution to an expected score (§13.4),
+  `raw_expected_score = sum_g p(score_g) * value(score_g)`, then normalizes
+  `(raw - 1) / (G - 1)`. Requires full coverage: exactly `(pool_size-1) *
+  repetitions` observations per (candidate, criterion); a malformed/missing
+  response or incomplete coverage raises `CoverageError` (job fails visibly).
+- `src/avt/verification.py`: `expected_scores_from_logprobs`; `_label_probs`
+  now renormalizes the five single-token label weights to sum to 1 (they are a
+  subset of the full token distribution, so raw mass must be renormalized to
+  keep the [1, G] invariant) and rejects non-finite/zero mass.
+- Schema: `expected_scores(candidate_id, criterion, raw_expected_score,
+  normalized_score, observations)`; catalog `record_expected_score` /
+  `list_expected_scores` (immutable).
+- CLI: `avt expected-scores --config …`.
+
+### Checks
+
+- `uv run pytest -q` — 55 passed (new: expected-score math, label-mass
+  renormalization, incomplete-coverage failure, malformed-response failure).
+- `uv run ruff check .` / `ruff format --check .` — clean.
+- `uv run mypy .` — no issues (24 source files).
+- Verified on `smoke-rtx-v3`: `avt expected-scores` produced 18 records
+  (6 candidates × 3 criteria, 2 observations each), raw ∈ [1, 5],
+  normalized ∈ [0, 1].
+
+### Commit
+
+- Stage 10: `src/avt/expected.py`, `src/avt/verification.py`,
+  `src/avt/storage/schema.py`, `src/avt/storage/catalog.py`, `src/avt/cli.py`,
+  `tests/test_expected.py`, `tests/test_verification.py`.
+
 ### Next action
 
-Proceed to Stage 10 (continuous Qwen verifier) using the frozen `smoke-rtx-v3`
-pairs.
+Proceed to Stage 11 (three-criterion evaluation) using the frozen
+`smoke-rtx-v3` expected scores.

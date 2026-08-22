@@ -15,6 +15,7 @@ from avt.verification import (
     MalformedVerifier,
     MissingLabelError,
     build_messages,
+    expected_scores_from_logprobs,
     normalize_endpoint,
     scores_from_logprobs,
 )
@@ -199,3 +200,21 @@ def test_space_prefixed_label_token_matches() -> None:
         {"token": " A", "top_logprobs": _top(True, "A")},
     ]
     assert scores_from_logprobs(content) == (1, 1)
+
+
+def _toks(probs: dict[str, float]) -> list[dict[str, object]]:
+    import math as _m
+
+    return [
+        {"token": lab, "logprob": _m.log(prob) if prob else -30.0} for lab, prob in probs.items()
+    ]
+
+
+def test_expected_scores_weighted_sum() -> None:
+    pa = {"A": 0.5, "B": 0.5, "C": 0.0, "D": 0.0, "E": 0.0}
+    pb = {"A": 0.0, "B": 0.0, "C": 1.0, "D": 0.0, "E": 0.0}
+    ca: list[dict[str, object]] = [{"token": "A", "top_logprobs": _toks(pa)}]
+    cb: list[dict[str, object]] = [{"token": "C", "top_logprobs": _toks(pb)}]
+    ra, rb = expected_scores_from_logprobs(ca + cb)
+    assert abs(ra - 1.5) < 1e-6  # 0.5*1 + 0.5*2
+    assert abs(rb - 3.0) < 1e-6  # 1.0*3

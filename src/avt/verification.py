@@ -114,20 +114,24 @@ def _label_of(token: str) -> str | None:
 
 
 def _label_probs(top_logprobs: list[dict[str, object]]) -> dict[str, float]:
-    probs: dict[str, float] = {}
+    weights: dict[str, float] = {}
     for item in top_logprobs:
         token = str(item.get("token"))
         label = _label_of(token)
         if label is not None:
             lp = item.get("logprob")
             if isinstance(lp, (int, float)):
-                probs[label] = probs.get(label, 0.0) + math.exp(float(lp))
-    missing = [lab for lab in SCORE_LABELS if lab not in probs]
+                weights[label] = weights.get(label, 0.0) + math.exp(float(lp))
+    missing = [lab for lab in SCORE_LABELS if lab not in weights]
     if missing:
         # Plan 13.2: missing score-token probabilities are a configuration
         # failure; never silently assign probability zero.
         raise MissingLabelError(f"endpoint omitted logprob for labels {missing}")
-    return probs
+    total = sum(weights.values())
+    if not math.isfinite(total) or total <= 0.0:
+        # Plan 13.4: p(score) must be a valid probability over the G labels.
+        raise MissingLabelError(f"non-finite/zero label mass at a score position: {weights}")
+    return {label: weight / total for label, weight in weights.items()}
 
 
 def _discrete(probs: dict[str, float]) -> int:
@@ -135,11 +139,17 @@ def _discrete(probs: dict[str, float]) -> int:
     return _LABEL_VALUE[best]
 
 
-def scores_from_logprobs(content_logprobs: list[dict[str, object]]) -> tuple[int, int]:
-    """Extract discrete A/B scores from an OpenAI logprob response.
+def _expected(probs: dict[str, float]) -> float:
+    return sum(_LABEL_VALUE[label] * prob for label, prob in probs.items())
 
-    The two scores are the first two generated tokens whose sampled token is a
-    score label (a separator token like a space is skipped).
+
+def _both_label_probs(
+    content_logprobs: list[dict[str, object]],
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Return the A and B score-token label distributions.
+
+    The two scores are the first two generated tokens whose sampled token maps
+    to a score label (a separator/whitespace token is skipped).
     """
     label_indices = [
         i
@@ -147,12 +157,29 @@ def scores_from_logprobs(content_logprobs: list[dict[str, object]]) -> tuple[int
         if isinstance(c.get("token"), str) and _label_of(str(c["token"])) in SCORE_LABELS
     ]
     if len(label_indices) < 2:
-        raise MalformedVerifier(f"expected >= 2 score-token positions, found {len(label_indices)}")
+        raise MalformedVerifier(
+            f"expected >= 2 score-token positions, found {len(label_indices)}"
+        )
     top0 = content_logprobs[label_indices[0]].get("top_logprobs")
     top1 = content_logprobs[label_indices[1]].get("top_logprobs")
-    pa = _label_probs(list(top0) if isinstance(top0, list) else [])
-    pb = _label_probs(list(top1) if isinstance(top1, list) else [])
+    return (
+        _label_probs(list(top0) if isinstance(top0, list) else []),
+        _label_probs(list(top1) if isinstance(top1, list) else []),
+    )
+
+
+def scores_from_logprobs(content_logprobs: list[dict[str, object]]) -> tuple[int, int]:
+    """Discrete A/B scores: each trajectory's highest-probability label value."""
+    pa, pb = _both_label_probs(content_logprobs)
     return _discrete(pa), _discrete(pb)
+
+
+def expected_scores_from_logprobs(
+    content_logprobs: list[dict[str, object]],
+) -> tuple[float, float]:
+    """Continuous A/B expected scores: label-value weighted probability sums."""
+    pa, pb = _both_label_probs(content_logprobs)
+    return _expected(pa), _expected(pb)
 
 
 def _post_json(url: str, payload: dict[str, object], timeout: int = 120) -> dict[str, Any]:
