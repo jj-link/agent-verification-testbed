@@ -379,7 +379,48 @@ unchanged) and is passed to Harbor as `--agent-kwarg version=0.22.0`, so a
 rerun of any experiment cannot silently install a different actor. Covered by
 `test_generation_pins_agent_version` (27 tests pass).
 
+## Stage 8 — Safe renderer and pair builder
+
+**Status:** complete. Frozen pair records built for `smoke-rtx-v3`; leakage and
+unit tests pass.
+
+### Work
+
+- `src/avt/rendering.py`: deterministic, verifier-safe trajectory renderer.
+  Reads a candidate's Harbor ATIF (`agent/trajectory.json`) only — never
+  `verifier/` artifacts (hidden tests, reward), reference solutions, or
+  pass/fail labels. Preserves the full public instruction (user-source steps)
+  verbatim; renders agent message, tool calls, and embedded tool outputs in
+  chronological order; head+tail truncates oversized bodies with an explicit
+  `[OUTPUT TRUNCATED: original_tokens=…, retained=head:…+tail:…]` marker; records
+  original vs rendered token counts (deterministic chars/token proxy, applied
+  symmetrically to A and B). qwen ATIF embeds `observation.results` on the agent
+  step.
+- `src/avt/pairs.py`: `PairBuilder` builds all unordered pairs per task from the
+  frozen SUCCEEDED pool, persists them idempotently, and records the task
+  instruction. `pairs.candidate_a/b` store the canonical sorted membership
+  (Stage 6 design); deterministic A/B display order is delegated to
+  `display_order()` for per-verification `verifications.display_order` rows.
+- `src/avt/storage/catalog.py`: added `record_task`, `get_task_instruction`,
+  `list_candidates`, `record_pair`, `list_pairs`.
+- CLI: `avt build-pairs --config experiments/smoke-rtx-v3.yaml`.
+
+### Checks
+
+- `uv run pytest -q` — 38 passed (11 new: renderer determinism/symmetry,
+  instruction preservation, head/tail truncation, token counts, verifier-payload
+  leakage; pair build count/idempotency/unordered-identity/task-skip/order).
+- `uv run ruff check .` / `ruff format --check .` — clean.
+- `uv run mypy .` — no issues (20 source files).
+- Verified on the real pool: `avt build-pairs` builds 6 pairs
+  (`distribution-search` 3, `cancel-async-tasks` 3), sorted canonical membership,
+  task instruction stored (e.g. 1139 chars); a real trajectory renders to
+  instruction + body with recorded token counts.
+
+### Commit
+
+- 6d11a7d, 1581b4d (Stage 7 + actor-version pin).
+
 ### Next action
 
-Proceed to Stage 8 (safe trajectory renderer and pair builder) using the frozen
-`smoke-rtx-v3` candidate pool.
+Proceed to Stage 9 (discrete Qwen judge) using the frozen `smoke-rtx-v3` pairs.

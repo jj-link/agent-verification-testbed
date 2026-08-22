@@ -24,6 +24,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_gen = sub.add_parser("generate", help="generate candidates for the experiment")
     p_gen.add_argument("--config", required=True, help="experiment config path")
 
+    p_pairs = sub.add_parser("build-pairs", help="build frozen candidate pairs")
+    p_pairs.add_argument("--config", required=True, help="experiment config path")
+
     return parser
 
 
@@ -74,6 +77,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[{state}] {r.task_id} attempt={r.attempt_index} reward={r.reward}")
         print(f"total={len(gen_results)} ok={len(gen_results) - len(failed)} failed={len(failed)}")
         return 0 if not failed else 1
+
+    if args.command == "build-pairs":
+        from avt.config import load_config
+        from avt.pairs import PairBuilder
+
+        cfg = load_config(args.config)
+        builder = PairBuilder(cfg, Path.cwd())
+        pair_ids = builder.build()
+        print(f"built {len(pair_ids)} pairs")
+        return 0
 
     parser.error(f"unknown command: {args.command}")
     return 2

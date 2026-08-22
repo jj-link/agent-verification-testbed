@@ -184,6 +184,59 @@ class CatalogConnection:
         )
         self._conn.commit()
 
+    def record_task(self, experiment_id: str, task_id: str, instruction: str) -> None:
+        """Upsert a task and its public instruction (idempotent)."""
+        self._conn.execute(
+            "INSERT INTO tasks(experiment_id, task_id, instruction) VALUES(?,?,?) "
+            "ON CONFLICT(experiment_id, task_id) DO UPDATE SET instruction=excluded.instruction",
+            (experiment_id, task_id, instruction),
+        )
+        self._conn.commit()
+
+    def get_task_instruction(self, experiment_id: str, task_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT instruction FROM tasks WHERE experiment_id=? AND task_id=?",
+            (experiment_id, task_id),
+        ).fetchone()
+        return str(row[0]) if row and row[0] else None
+
+    def list_candidates(self, experiment_id: str, task_id: str) -> list[dict[str, object]]:
+        rows = self._conn.execute(
+            "SELECT candidate_id, task_id, attempt_index, status, artifact_path "
+            "FROM candidates WHERE experiment_id=? AND task_id=? AND status=? "
+            "ORDER BY attempt_index",
+            (experiment_id, task_id, "SUCCEEDED"),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def record_pair(
+        self,
+        pair_id: str,
+        experiment_id: str,
+        task_id: str,
+        candidate_a: str,
+        candidate_b: str,
+        status: str,
+    ) -> None:
+        """Upsert a frozen candidate pair (idempotent). candidate_a/b are the
+        deterministic A/B display order; the pair identity is the unordered hash."""
+        self._conn.execute(
+            "INSERT INTO pairs(pair_id, experiment_id, task_id, candidate_a, "
+            "candidate_b, status, created_at) VALUES(?,?,?,?,?,?,?) "
+            "ON CONFLICT(pair_id) DO UPDATE SET candidate_a=excluded.candidate_a, "
+            "candidate_b=excluded.candidate_b, status=excluded.status",
+            (pair_id, experiment_id, task_id, candidate_a, candidate_b, status, _now()),
+        )
+        self._conn.commit()
+
+    def list_pairs(self, experiment_id: str, task_id: str) -> list[dict[str, object]]:
+        rows = self._conn.execute(
+            "SELECT pair_id, candidate_a, candidate_b, status FROM pairs "
+            "WHERE experiment_id=? AND task_id=?",
+            (experiment_id, task_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
 
 class Catalog:
     """Owns the experiment catalog database file and opens connections."""
