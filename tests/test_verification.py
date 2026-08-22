@@ -86,7 +86,7 @@ def _top(all_labels: bool, dominant: str, base: float = -2.0) -> list[dict[str, 
             lp = -0.05
         items.append({"token": lab, "logprob": lp})
     if not all_labels:
-        items = [i for i in items if i["token"] != "3"]
+        items = [i for i in items if i["token"] != "C"]
     return items
 
 
@@ -123,33 +123,33 @@ def test_build_messages_rejects_unknown_criterion() -> None:
 
 def test_scores_from_logprobs_picks_highest_prob_label() -> None:
     content: list[dict[str, object]] = [
-        {"token": "3", "top_logprobs": _top(True, "3")},
-        {"token": "2", "top_logprobs": _top(True, "2")},
+        {"token": "C", "top_logprobs": _top(True, "C")},
+        {"token": "B", "top_logprobs": _top(True, "B")},
     ]
     assert scores_from_logprobs(content) == (3, 2)
 
 
 def test_scores_skip_separator_token() -> None:
     content: list[dict[str, object]] = [
-        {"token": "5", "top_logprobs": _top(True, "5")},
+        {"token": "E", "top_logprobs": _top(True, "E")},
         {"token": " ", "top_logprobs": []},
-        {"token": "1", "top_logprobs": _top(True, "1")},
+        {"token": "A", "top_logprobs": _top(True, "A")},
     ]
     assert scores_from_logprobs(content) == (5, 1)
 
 
 def test_missing_label_is_configuration_failure(tmp_path: Path) -> None:
-    # one score position omits label "3" -> MissingLabelError (not silent zero)
+    # one score position omits label "C" -> MissingLabelError (not silent zero)
     content: list[dict[str, object]] = [
-        {"token": "3", "top_logprobs": _top(False, "3")},
-        {"token": "2", "top_logprobs": _top(True, "2")},
+        {"token": "B", "top_logprobs": _top(False, "B")},
+        {"token": "B", "top_logprobs": _top(True, "B")},
     ]
     with pytest.raises(MissingLabelError):
         scores_from_logprobs(content)
 
 
 def test_malformed_verifier_when_fewer_than_two_scores() -> None:
-    content: list[dict[str, object]] = [{"token": "3", "top_logprobs": _top(True, "3")}]
+    content: list[dict[str, object]] = [{"token": "A", "top_logprobs": _top(True, "A")}]
     with pytest.raises(MalformedVerifier):
         scores_from_logprobs(content)
 
@@ -168,7 +168,7 @@ def test_judge_verifies_pair_and_persists(tmp_path: Path, monkeypatch: pytest.Mo
     pair: dict[str, object] = {"pair_id": pid, "candidate_a": ca, "candidate_b": cb}
 
     def fake_post(url: str, payload: dict[str, object], timeout: int = 120) -> dict[str, object]:
-        return _response("3", "2")
+        return _response("C", "B")
 
     monkeypatch.setattr(V, "_post_json", fake_post)
 
@@ -189,3 +189,13 @@ def test_judge_verifies_pair_and_persists(tmp_path: Path, monkeypatch: pytest.Mo
     with judge.catalog.connect() as scoped:
         ver = scoped._conn.execute("SELECT COUNT(*) FROM verifications").fetchone()
     assert ver[0] == 1
+
+
+def test_space_prefixed_label_token_matches() -> None:
+    # qwen often emits the second score letter as a leading-space token (" A");
+    # it must still be recognized as a label position and score as A (=1).
+    content: list[dict[str, object]] = [
+        {"token": "A", "top_logprobs": _top(True, "A")},
+        {"token": " A", "top_logprobs": _top(True, "A")},
+    ]
+    assert scores_from_logprobs(content) == (1, 1)

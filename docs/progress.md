@@ -438,15 +438,20 @@ ruff/mypy clean).
 
 - `src/avt/verification.py`: discrete Qwen judge (plan §13.1-13.3). One model
   request per (pair, criterion) reads the probability the model places on the
-  single-token score labels `"1".."5"` (G=5) for trajectory A and trajectory B
-  from the response `top_logprobs`; the discrete score is each trajectory's
-  highest-probability label. The request contains only the public task
+  frozen single-token score labels `doctor.G5_LABELS = ("A","B","C","D","E")`
+  (Stage 4; A<B<C<D<E → 1..5) for trajectory A and trajectory B from the
+  response `top_logprobs`; the discrete score is each trajectory's
+  highest-probability label value. The request contains only the public task
   description and the two rendered trajectories — no grader outcome, hidden
   tests, reference solution, or pass/fail labels.
 - Score labels validated on the RTX endpoint: SGLang returns per-token
-  `top_logprobs` including all five labels (single-token). Missing-label
-  probabilities raise `MissingLabelError` (configuration failure, never silent
-  zero), per §13.2.
+  `top_logprobs` including all five letters (single-token). Label matching is
+  tolerant of delimiter/whitespace-wrapped tokens (`" A"`, `"E>"`, `"<E>"`).
+  Missing-label probabilities raise `MissingLabelError` (configuration failure,
+  never silent zero), per §13.2. Because the endpoint is stochastic, a malformed
+  draw is retried (bounded 3×), matching the plan's "malformed verifier output →
+  retry" policy. The label set is included in the verifier identity so
+  verification IDs bind the scoring policy.
 - The judge runs host-side, so `host.docker.internal` (a container-only alias) is
   mapped to `127.0.0.1`; the frozen config / experiment id stays stable.
 - Paired prompt uses the stored public task instruction (Stage 8) and each

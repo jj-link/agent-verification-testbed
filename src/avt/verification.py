@@ -20,6 +20,7 @@ from typing import Any
 from urllib.request import Request, urlopen
 
 from avt.config import Config
+from avt.doctor import G5_LABELS
 from avt.pairs import display_order
 from avt.rendering import render_trajectory
 from avt.storage.artifacts import ArtifactStore
@@ -36,8 +37,13 @@ __all__ = [
     "scores_from_logprobs",
 ]
 
-SCORE_LABELS = ["1", "2", "3", "4", "5"]
-_TOP_LOGPROBS = 20
+# Frozen granularity-5 labels from Stage 4 (`doctor.G5_LABELS`): letters tokenize
+# to a single token with a stable ordering. A < B < C < D < E maps to 1..5.
+SCORE_LABELS = tuple(G5_LABELS)
+_LABEL_VALUE = {label: i + 1 for i, label in enumerate(G5_LABELS)}
+_TOP_LOGPROBS = 100
+# Delimiter/whitespace characters allowed around a single letter token.
+_DELIMS = set("<>(),.:;") | {chr(32), chr(9), chr(10), chr(13), chr(39), chr(34)}
 
 CRITERIA: dict[str, str] = {
     "specification": "Does the approach satisfy ALL of the explicit task requirements?",
@@ -80,8 +86,9 @@ def build_messages(
         f"TASK:\n{task_description}\n\n"
         f"TRAJECTORY A:\n{trajectory_a}\n\n"
         f"TRAJECTORY B:\n{trajectory_b}\n\n"
-        "Reply with exactly two integers separated by a single space: "
-        "'<score_for_A> <score_for_B>'. Integers only, no explanation."
+        f"Output ONLY: <A> <B>, where <A> is a single letter from "
+        f"{{{','.join(G5_LABELS)}}} scoring trajectory A and <B> a single letter "
+        f"from {{{','.join(G5_LABELS)}}} scoring trajectory B. No other text."
     )
     return [
         {"role": "system", "content": _DOMAIN_INSTRUCTION},
@@ -89,14 +96,32 @@ def build_messages(
     ]
 
 
+def _label_of(token: str) -> str | None:
+    """Return the single score letter a generated token denotes, or None.
+
+    The frozen single-token labels frequently surface wrapped in delimiter or
+    whitespace tokens (``" A"``, ``"E>"``, ``"<E>"``, ``"E,"``). A token maps
+    to a letter only if it contains exactly one A-E letter and no other
+    non-delimiter content.
+    """
+    letters = [ch for ch in token if ch in "ABCDE"]
+    if len(letters) != 1:
+        return None
+    for ch in token:
+        if ch not in "ABCDE" and ch not in _DELIMS:
+            return None
+    return letters[0]
+
+
 def _label_probs(top_logprobs: list[dict[str, object]]) -> dict[str, float]:
     probs: dict[str, float] = {}
     for item in top_logprobs:
         token = str(item.get("token"))
-        if token in SCORE_LABELS:
+        label = _label_of(token)
+        if label is not None:
             lp = item.get("logprob")
             if isinstance(lp, (int, float)):
-                probs[token] = math.exp(float(lp))
+                probs[label] = probs.get(label, 0.0) + math.exp(float(lp))
     missing = [lab for lab in SCORE_LABELS if lab not in probs]
     if missing:
         # Plan 13.2: missing score-token probabilities are a configuration
@@ -106,7 +131,8 @@ def _label_probs(top_logprobs: list[dict[str, object]]) -> dict[str, float]:
 
 
 def _discrete(probs: dict[str, float]) -> int:
-    return int(max(probs.items(), key=lambda kv: kv[1])[0])
+    best = max(probs.items(), key=lambda kv: kv[1])[0]
+    return _LABEL_VALUE[best]
 
 
 def scores_from_logprobs(content_logprobs: list[dict[str, object]]) -> tuple[int, int]:
@@ -118,7 +144,7 @@ def scores_from_logprobs(content_logprobs: list[dict[str, object]]) -> tuple[int
     label_indices = [
         i
         for i, c in enumerate(content_logprobs)
-        if isinstance(c.get("token"), str) and str(c["token"]) in SCORE_LABELS
+        if isinstance(c.get("token"), str) and _label_of(str(c["token"])) in SCORE_LABELS
     ]
     if len(label_indices) < 2:
         raise MalformedVerifier(f"expected >= 2 score-token positions, found {len(label_indices)}")
@@ -200,6 +226,7 @@ class DiscreteJudge:
             "criteria": list(self.config.verifier.criteria),
             "granularity": self.config.verifier.granularity,
             "repetitions": self.config.verifier.repetitions,
+            "labels": list(SCORE_LABELS),
         }
         vid = verification_id(pair_id_, verifier_cfg, criterion, repetition, disp_a + "+" + disp_b)
         scores: dict[str, object] = {
@@ -241,16 +268,30 @@ class DiscreteJudge:
         payload: dict[str, object] = {
             "model": self.config.verifier.model,
             "messages": messages,
-            "max_tokens": 8,
+            "max_tokens": 16,
             "logprobs": True,
             "top_logprobs": _TOP_LOGPROBS,
             "chat_template_kwargs": {"enable_thinking": False},
         }
-        raw = _post_json(f"{self.endpoint}/chat/completions", payload)
-        choices = raw.get("choices") or [{}]
-        lp = (choices[0].get("logprobs") or {}) if isinstance(choices[0], dict) else {}
-        content_lp: list[dict[str, Any]] = list(lp.get("content") or [])
-        score_a, score_b = scores_from_logprobs(content_lp)
+        # The endpoint is stochastic: a single draw occasionally returns prose
+        # with no isolated score letter (malformed) or omits a label. Bounded
+        # retry mirrors the plan's "malformed verifier output -> retry" policy.
+        score_a = score_b = 0
+        last_issue: Exception | None = None
+        for _attempt in range(3):
+            raw = _post_json(f"{self.endpoint}/chat/completions", payload)
+            choices = raw.get("choices") or [{}]
+            lp = (choices[0].get("logprobs") or {}) if isinstance(choices[0], dict) else {}
+            content_lp: list[dict[str, Any]] = list(lp.get("content") or [])
+            try:
+                score_a, score_b = scores_from_logprobs(content_lp)
+            except (MalformedVerifier, MissingLabelError) as exc:
+                last_issue = exc
+                continue
+            last_issue = None
+            break
+        if last_issue is not None:
+            raise last_issue
         return self._persist(
             str(pair["pair_id"]),
             task_id,
