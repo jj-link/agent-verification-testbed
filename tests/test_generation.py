@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from avt.config import load_config
-from avt.generation import GenerationService, InfrastructureFailure
+from avt.generation import GenerationService, InfrastructureFailure, _HarborRunner
 from avt.storage.ids import candidate_id as cid
 
 CONFIG_YAML = """
@@ -145,6 +145,12 @@ def test_agent_timeout_trial_is_rejected_and_retried(tmp_path: Path) -> None:
     with service.catalog.connect() as scoped:
         assert scoped.count_jobs("candidate", "SUCCEEDED") == 1
         assert scoped.count_jobs("candidate", "PERMANENT_FAILED") == 0
+
+
+def test_harbor_env_forces_utf8() -> None:
+    env = _HarborRunner.harbor_env()
+    assert env["PYTHONUTF8"] == "1"
+    assert env["PYTHONIOENCODING"] == "utf-8"
 
 
 def test_generate_all_reclaims_crash_left_running(tmp_path: Path) -> None:

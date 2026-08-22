@@ -11,6 +11,7 @@ config (temperature, max_tokens), so candidate pools are configuration-bound.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -68,6 +69,15 @@ class _HarborRunner:
 
     def __init__(self, repo_root: Path) -> None:
         self.repo_root = repo_root
+
+    @staticmethod
+    def harbor_env() -> dict[str, str]:
+        """Subprocess environment guaranteed to decode UTF-8 (Harbor reads files
+        without an explicit encoding and would otherwise use the system codec)."""
+        env = dict(os.environ)
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONIOENCODING"] = "utf-8"
+        return env
 
     def _write_qwen_settings(self, config: Config) -> Path:
         """Write the config-derived Qwen settings and return the path to mount."""
@@ -130,7 +140,9 @@ class _HarborRunner:
             job_name,
             "--yes",
         ]
-        result = subprocess.run(cmd, cwd=self.repo_root, capture_output=True, text=True)
+        result = subprocess.run(
+            cmd, cwd=self.repo_root, capture_output=True, text=True, env=self.harbor_env()
+        )
         job_dir = out_dir / job_name
         if result.returncode != 0 or not job_dir.is_dir():
             detail = (result.stderr or result.stdout or "")[-2000:]
