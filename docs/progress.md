@@ -247,9 +247,52 @@ artifact store; records survive restart and resume).
 
 ### Commit
 
-- `58fa6f9` (previous); Stage 6 commit to follow.
+- `6b079cc` — `feat(storage): add catalog, ground-truth, artifact store, and
+  deterministic IDs`.
 
 ### Next action
 
 Stage 7 — implement candidate generation (resumable generation jobs yielding
 three usable candidates per smoke task).
+
+---
+
+## Stage 7 — Candidate generation
+
+**Status:** in progress (implementation complete; smoke generation running).
+
+### Work
+
+- Implemented frozen config loading (`config.py`) with `${VAR}` environment
+  interpolation and typed accessors.
+- Implemented deterministic seeded task selection (`selection.py`) fetching the
+  task pool from the pinned Terminal-Bench commit.
+- Implemented the generation service (`generation.py`) with persisted, resumable
+  candidate jobs, bounded infrastructure retries, artifact + ground-truth
+  indexing, and Qwen settings derived from the frozen generator config.
+- Added `avt select-tasks` and `avt generate` CLI commands.
+- Selected smoke tasks (seed 42): `distribution-search`, `path-tracing-reverse`.
+
+### Decisions
+
+- `temperature` and `max_tokens` are frozen in the experiment config; the Qwen
+  Code settings mounted into Harbor derive from and are checksum-bound to them.
+- Candidate jobs stay `RUNNING` across internal retry rounds and are marked
+  `PERMANENT_FAILED` only after exhaustion; pre-existing round dirs are reused
+  on resume.
+- Ground truth is immutable: identical rewrites are no-ops, conflicting ones
+  raise.
+
+### Checks
+
+- 19 tests pass; ruff/mypy clean.
+- `avt select-tasks` wrote smoke/pilot/main task files deterministically.
+
+### Commit
+
+- `6b079cc` (previous); Stage 7 commit to follow.
+
+### Next action
+
+Run `avt generate` for the smoke tasks to produce three usable candidates each,
+then record the run and commit.

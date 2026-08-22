@@ -36,14 +36,36 @@ class GroundTruthConnection:
         reward: float | None,
         raw: object,
     ) -> None:
+        """Insert ground truth immutably; identical rewrites are a no-op.
+
+        Raises ``ValueError`` if an existing record for ``candidate_id`` has a
+        different task, reward, or raw payload, so a rerun/reindex cannot change
+        frozen ground truth.
+        """
         import json
 
+        new_raw = json.dumps(raw, sort_keys=True, ensure_ascii=True) if raw is not None else None
+        row = self._conn.execute(
+            "SELECT task_id, reward, raw FROM official_results WHERE candidate_id=?",
+            (candidate_id,),
+        ).fetchone()
+        if row is not None:
+            existing_raw = row[2]
+            if (
+                row[0] != task_id
+                or (row[1] is None and reward is not None)
+                or (row[1] is not None and row[1] != reward)
+                or existing_raw != new_raw
+            ):
+                raise ValueError(
+                    f"ground truth conflict for candidate {candidate_id!r}: "
+                    f"existing {row!r} vs new (task={task_id!r}, reward={reward!r})"
+                )
+            return
         self._conn.execute(
             "INSERT INTO official_results(candidate_id, task_id, reward, raw, created_at) "
-            "VALUES(?,?,?,?,?) "
-            "ON CONFLICT(candidate_id) DO UPDATE SET reward=excluded.reward, "
-            "raw=excluded.raw",
-            (candidate_id, task_id, reward, json.dumps(raw) if raw is not None else None, _now()),
+            "VALUES(?,?,?,?,?)",
+            (candidate_id, task_id, reward, new_raw, _now()),
         )
         self._conn.commit()
 

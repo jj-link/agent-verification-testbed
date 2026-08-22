@@ -1,0 +1,150 @@
+"""Tests for generation job lifecycle: retry, resume, and idempotence."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from avt.config import load_config
+from avt.generation import GenerationService, InfrastructureFailure
+
+CONFIG_YAML = """
+experiment:
+  name: s
+  seed: 42
+  task_file: __TASKFILE__
+  candidates_per_task: 1
+upstream:
+  terminal_bench_commit: abc
+  harbor_commit: def
+generator:
+  harness: qwen-coder
+  model: m
+  endpoint: e
+  temperature: 0.7
+  max_tokens: 8192
+verifier:
+  model: m
+  endpoint: e
+  criteria: [specification]
+  granularity: 5
+  repetitions: 1
+rendering:
+  max_pair_context_tokens: 1000
+ranking:
+  method: round_robin_bradley_terry
+storage:
+  root: __ROOT__
+  metadata_db: __ROOT__/experiment.sqlite
+  ground_truth_db: __ROOT__/ground_truth.sqlite
+"""
+
+
+def _write_trial(job_dir: Path, reward: float | None, exc: str | None = None) -> None:
+    trial_dir = job_dir / "task_x__XXXX"
+    trial_dir.mkdir(parents=True, exist_ok=True)
+    verifier = {"rewards": {"reward": reward}} if not exc else {}
+    data = {
+        "verifier_result": verifier,
+        "exception_info": (
+            {
+                "exception_type": exc,
+                "exception_message": "boom",
+                "exception_traceback": "",
+                "occurred_at": "x",
+            }
+            if exc
+            else None
+        ),
+    }
+    (trial_dir / "result.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+def _make_service(tmp_path: Path) -> tuple[GenerationService, Path]:
+    cfg_text = CONFIG_YAML.replace("__TASKFILE__", (tmp_path / "tasks.txt").as_posix()).replace(
+        "__ROOT__", (tmp_path / "avt").as_posix()
+    )
+    cfg_path = tmp_path / "smoke.yaml"
+    cfg_path.write_text(cfg_text, encoding="utf-8")
+    (tmp_path / "tasks.txt").write_text("task_x\n", encoding="utf-8")
+    cfg = load_config(cfg_path)
+    service = GenerationService(cfg, tmp_path)
+    return service, tmp_path
+
+
+def test_fail_then_success_retry_bookkeeping(tmp_path: Path) -> None:
+    service, root = _make_service(tmp_path)
+    calls: list[int] = [0]
+
+    def fake_run(config: object, task_id: str, attempt: int, out_dir: Path, job_name: str) -> Path:
+        calls[0] += 1
+        if calls[0] == 1:
+            raise InfrastructureFailure("container startup failed")
+        _write_trial(out_dir / job_name, reward=1.0)
+        return out_dir / job_name
+
+    service.runner.run = fake_run  # type: ignore[method-assign]
+    res = service.generate_one("task_x", 0)
+    assert res.reward == 1.0
+    # Two internal rounds ran, but the logical job is one row and SUCCEEDED.
+    with service.catalog.connect() as scoped:
+        assert scoped.count_jobs("candidate", "SUCCEEDED") == 1
+    assert calls[0] == 2
+
+
+def test_exhausted_retries_mark_permanent(tmp_path: Path) -> None:
+    service, _ = _make_service(tmp_path)
+
+    def fake_run(config: object, task_id: str, attempt: int, out_dir: Path, job_name: str) -> Path:
+        raise InfrastructureFailure("always fails")
+
+    service.runner.run = fake_run  # type: ignore[method-assign]
+    with pytest.raises(InfrastructureFailure):
+        service.generate_one("task_x", 0)
+    with service.catalog.connect() as scoped:
+        assert scoped.count_jobs("candidate", "PERMANENT_FAILED") == 1
+
+
+def test_resume_reuses_pre_existing_round(tmp_path: Path) -> None:
+    service, root = _make_service(tmp_path)
+    # Pre-create round 0 job dir with a completed trial (as if a prior crash finished it).
+    round0 = root / "avt/generation/task_x/0/0/gen-task_x-0-0"
+    _write_trial(round0, reward=0.0)
+    calls: list[int] = [0]
+
+    def fake_run(config: object, task_id: str, attempt: int, out_dir: Path, job_name: str) -> Path:
+        calls[0] += 1
+        raise AssertionError("should reuse existing round, not run")
+
+    service.runner.run = fake_run  # type: ignore[method-assign]
+    res = service.generate_one("task_x", 0)
+    assert res.reward == 0.0  # valid failed candidate is graded, not discarded
+    assert calls[0] == 0  # no new harbor run
+    with service.catalog.connect() as scoped:
+        assert scoped.count_jobs("candidate", "SUCCEEDED") == 1
+
+
+def test_agent_timeout_trial_is_rejected_and_retried(tmp_path: Path) -> None:
+    """A timed-out trial must NOT be indexed as a successful candidate."""
+    service, root = _make_service(tmp_path)
+    rounds: list[int] = []
+
+    def fake_run(config: object, task_id: str, attempt: int, out_dir: Path, job_name: str) -> Path:
+        round_no = len(rounds)
+        rounds.append(round_no)
+        # First produced round times out; second produces a graded trial.
+        if round_no == 0:
+            _write_trial(out_dir / job_name, reward=1.0, exc="AgentTimeoutError")
+        else:
+            _write_trial(out_dir / job_name, reward=1.0)
+        return out_dir / job_name
+
+    service.runner.run = fake_run  # type: ignore[method-assign]
+    res = service.generate_one("task_x", 0)
+    assert res.reward == 1.0
+    assert rounds == [0, 1]  # two distinct round directories, retry advanced
+    with service.catalog.connect() as scoped:
+        assert scoped.count_jobs("candidate", "SUCCEEDED") == 1
+        assert scoped.count_jobs("candidate", "PERMANENT_FAILED") == 0

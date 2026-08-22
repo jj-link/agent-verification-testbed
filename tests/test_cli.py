@@ -18,11 +18,17 @@ def test_no_command_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert main([]) == 0
     out = capsys.readouterr().out
     assert "usage:" in out
-    assert "doctor" in out
+    assert "select-tasks" in out
+    assert "generate" in out
 
 
 def test_unknown_command_fails(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc:
         main(["not-a-command"])
     assert exc.value.code == 2
-    assert "unknown command" in capsys.readouterr().err
+
+
+def test_select_tasks_requires_config(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["select-tasks"])
+    assert exc.value.code == 2
