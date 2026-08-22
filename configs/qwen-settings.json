@@ -1,0 +1,10 @@
+{
+  "model": {
+    "generationConfig": {
+      "extra_body": {
+        "chat_template_kwargs": { "enable_thinking": false }
+      },
+      "samplingParams": { "max_tokens": 8192 }
+    }
+  }
+}

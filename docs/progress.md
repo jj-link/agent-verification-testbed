@@ -162,9 +162,49 @@ diagnostic against this endpoint.
 
 ### Commit
 
-- `63d6d9e` (previous); Stage 4 commit to follow.
+- `65b3dc1` — `feat(verification): add avt doctor score-logprob diagnostics
+  (G=5)`.
 
 ### Next action
 
 Stage 5 — connect the Qwen actor to a Harbor-supported harness and produce one
 complete, officially graded local trajectory.
+
+---
+
+## Stage 5 — Qwen actor integration
+
+**Status:** complete.
+
+### Work
+
+- Selected Harbor agent `qwen-coder` (Alibaba Qwen Code CLI) as the actor.
+- Found Qwen3.8 thinking mode makes Qwen Code generate without terminating
+  (unbounded reasoning until the stream-lifetime cap).
+- Added `configs/qwen-settings.json` to disable thinking
+  (`generationConfig.extra_body.chat_template_kwargs.enable_thinking=false`)
+  and bound output tokens (`samplingParams.max_tokens=8192`).
+- Injected it via a Harbor bind mount + `QWEN_CODE_SYSTEM_SETTINGS_PATH`.
+- Ran one complete Qwen actor trajectory on `cancel-async-tasks`.
+
+### Decisions
+
+- Use the `qwen-coder` agent with the local endpoint
+  (`OPENAI_BASE_URL=http://100.86.3.45:8888/v1`, model `qwen3.8-27b-sglang`).
+- Disable thinking for the generation phase; it is a separate concern from the
+  verification phase (which needs per-token logprobs).
+
+### Checks
+
+- Trial `cancel-async-tasks__9MeAdy2`: no agent exception, official grader
+  reward `1.0`.
+- Qwen Code validated against the endpoint with the settings in ~45 s.
+
+### Commit
+
+- `65b3dc1` (previous); Stage 5 commit to follow.
+
+### Next action
+
+Stage 6 — implement storage and deterministic identifiers (two DBs and an
+artifact store; records survive restart and resume).
