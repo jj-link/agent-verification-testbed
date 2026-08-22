@@ -16,7 +16,7 @@ record, with the endpoint and context verified.
 
 - Recipe: `MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark`
   - Pinned commit: `c90d8c34cf795185ee8de736b7ded9bca3fe0de1`
-  - Launcher: `start-dspark.sh` → `start.sh`
+  - Launcher: `start.sh` (MTP) — see "Serving-mode note" below
 - SGLang image: `lmsysorg/sglang:qwen38-27b`
   - Container digest: `sha256:0076dffa60b76b7bf033c04d05e0cc69d46f2b8cd60aa2468827782afe9bc38f`
 - Namespace: container `qwen3.8-27b-sglang`, host port `8888`
@@ -34,6 +34,15 @@ record, with the endpoint and context verified.
   - On-host health-check URL (loopback on spark1):
     `http://127.0.0.1:8888/v1`
 - Context length: **262144** (native; YaRN off for DSpark)
+
+## Serving-mode note (Stage 4)
+
+The verifier needs token-level logprobs. DSpark (`start-dspark.sh`) rejects
+`logprobs`/`top_logprobs` with `"DSpark speculative decoding does not support
+return_logprob yet."` The server therefore runs **MTP** (`start.sh`, EAGLE/MTP
+speculative decoding), which returns complete per-position top-logprobs. Same
+recipe, same checkpoint, same context; only the launcher changed.
+`avt doctor` (see below) verifies this at runtime.
 
 ## Configuration (`.env`)
 

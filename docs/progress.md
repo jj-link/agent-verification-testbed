@@ -123,9 +123,48 @@ hardware identity.
 
 ### Commit
 
-- `8c25000` (previous); Stage 3 commit to follow.
+- `63d6d9e` — `feat(models): record and verify spark1 Qwen3.8-27B deployment`.
 
 ### Next action
 
 Stage 4 — validate score-logprob capability (G=5 labels scoreable), via a
 diagnostic against this endpoint.
+
+---
+
+## Stage 4 — Score-logprob validation
+
+**Status:** complete.
+
+### Work
+
+- Probed the endpoint for token-logprob support using letter-based single-token
+  score labels.
+- Found DSpark cannot return logprobs; switched the deployment to the MTP
+  launcher (same recipe/checkpoint/context).
+- Implemented a real `avt doctor` diagnostic (stdlib-only) verifying endpoint
+  identity, logprob access, and single-position G=5 label coverage.
+- Verified `avt doctor` passes against the live deployment.
+- Recorded findings in `docs/serving-diagnostics.md` and
+  `docs/qwen-deployment.md`.
+
+### Decisions
+
+- Score labels for `G=5`: ordered single tokens `A B C D E`.
+- Use the MTP launcher (logprob-capable) rather than DSpark for the AVT
+  verification pipeline.
+- `avt` with no subcommand prints help; `avt doctor` runs diagnostics.
+
+### Checks
+
+- `uv run avt doctor` → all four checks PASS (exit 0).
+- `uv run pytest -q` → 3 passed; ruff check/format clean; mypy clean.
+
+### Commit
+
+- `63d6d9e` (previous); Stage 4 commit to follow.
+
+### Next action
+
+Stage 5 — connect the Qwen actor to a Harbor-supported harness and produce one
+complete, officially graded local trajectory.
