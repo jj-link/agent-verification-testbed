@@ -211,3 +211,26 @@ def test_a_timed_out_trial_is_not_indexed(tmp_path: Path) -> None:
         service.generate_one("task_x", 0)
     with service.catalog.connect() as scoped:
         assert scoped._conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0] == 0
+
+
+def test_ungraded_trial_is_not_indexed_and_retried(tmp_path: Path) -> None:
+    """A trial with no reward and no exception must not enter the frozen pool."""
+    service, _ = _make_service(tmp_path)
+    rounds: list[int] = []
+
+    def fake_run(config: object, task_id: str, attempt: int, out_dir: Path, job_name: str) -> Path:
+        rounds.append(len(rounds))
+        if len(rounds) == 1:
+            _write_trial(out_dir / job_name, reward=None)  # ungraded, no exception
+        else:
+            _write_trial(out_dir / job_name, reward=0.5)
+        return out_dir / job_name
+
+    service.runner.run = fake_run  # type: ignore[method-assign]
+    res = service.generate_one("task_x", 0)
+    assert res.reward == 0.5
+    assert rounds == [0, 1]  # ungraded round retried, not indexed
+    with service.catalog.connect() as scoped:
+        assert scoped.count_jobs("candidate", "SUCCEEDED") == 1
+        n = scoped._conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0]
+        assert n == 1  # only the graded retry is in the manifest

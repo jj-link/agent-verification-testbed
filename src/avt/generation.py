@@ -167,7 +167,7 @@ def _find_trial_result(job_dir: Path) -> tuple[Path, float | None, str | None]:
             vr = data.get("verifier_result")
             if isinstance(vr, dict):
                 rewards = vr.get("rewards")
-                if isinstance(rewards, dict) and "reward" in rewards:
+                if isinstance(rewards, dict) and rewards.get("reward") is not None:
                     reward = float(rewards["reward"])
             exc = data.get("exception_info")
             exc_name: str | None = None
@@ -238,6 +238,9 @@ class GenerationService:
                     if exc_name is not None:
                         last_exc = exc_name
                         continue
+                    if reward is None:
+                        last_exc = "existing trial produced no reward (ungraded)"
+                        continue
                     self._persist(cand, task_id, attempt, trial, reward, job_dir)
                     with self.catalog.connect() as scoped:
                         scoped.mark_succeeded(_JOB_TYPE, cand)
@@ -252,6 +255,9 @@ class GenerationService:
             trial, reward, exc_name = _find_trial_result(job_dir)
             if exc_name:
                 last_exc = exc_name
+                continue
+            if reward is None:
+                last_exc = "trial produced no reward (ungraded)"
                 continue
 
             # Graded (reward may be 0.0 for a valid failed candidate).
