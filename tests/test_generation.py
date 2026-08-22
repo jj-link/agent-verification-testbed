@@ -153,6 +153,29 @@ def test_harbor_env_forces_utf8() -> None:
     assert env["PYTHONIOENCODING"] == "utf-8"
 
 
+def test_generation_pins_agent_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The frozen generator must pin the qwen-code version so a rerun can't
+    silently install a different @latest actor under the same experiment."""
+    service, _ = _make_service(tmp_path)
+    assert service.config.generator.agent_version == "0.22.0"  # code default
+
+    captured: dict[str, list[str]] = {}
+
+    def fake_subprocess(cmd: list[str], **kwargs: object) -> object:
+        captured["cmd"] = cmd
+        out_dir = cmd[cmd.index("-o") + 1]
+        job_name = cmd[cmd.index("--job-name") + 1]
+        job_dir = Path(out_dir) / job_name
+        _write_trial(job_dir, reward=1.0)
+        return type("P", (), {"returncode": 0, "stderr": "", "stdout": ""})()
+
+    monkeypatch.setattr("avt.generation.subprocess.run", fake_subprocess)
+    res = service.generate_one("task_x", 0)
+    assert res.reward == 1.0
+    assert "--agent-kwarg" in captured["cmd"]
+    assert "version=0.22.0" in captured["cmd"]
+
+
 def test_generate_all_reclaims_crash_left_running(tmp_path: Path) -> None:
     """A crash-left RUNNING job is reclaimed and completed on a fresh controller start."""
     service, _ = _make_service(tmp_path)

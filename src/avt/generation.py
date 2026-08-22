@@ -129,6 +129,9 @@ class _HarborRunner:
         ]
         if config.generator.timeout_multiplier > 1:
             cmd += ["--timeout-multiplier", str(config.generator.timeout_multiplier)]
+        # Pin the actor version so frozen pools are reproducible across reruns
+        # (Harbor installs @latest otherwise).
+        cmd += ["--agent-kwarg", f"version={config.generator.agent_version}"]
         cmd += [
             "--mounts",
             mounts,

@@ -54,6 +54,7 @@ class Generator:
     max_tokens: int
     timeout_multiplier: float = 1.0
     context_window: int | None = None
+    agent_version: str = "0.22.0"
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,7 @@ def load_config(path: str | Path) -> Config:
             if "timeout_multiplier" in gen
             else 1.0,
             context_window=_int(gen, "context_window") if "context_window" in gen else None,
+            agent_version=_str(gen, "agent_version") if "agent_version" in gen else "0.22.0",
         ),
         verifier=Verifier(
             model=_str(ver, "model"),

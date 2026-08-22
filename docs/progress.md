@@ -370,6 +370,15 @@ officially graded on the local RTX 6000 Pro.
   `experiments/smoke-rtx-v2.yaml`, `experiments/smoke-rtx-v3-tasks.txt`,
   `experiments/smoke-rtx-v3.yaml`.
 
+### Reproducibility follow-up — actor version pinned
+
+Harbor installs the qwen-code agent as `@latest` unless a version kwarg is
+passed; the v3 trials recorded `0.22.0`. `generator.agent_version` now defaults
+to `"0.22.0"` (a code default, so the frozen `smoke-rtx-v3` experiment id is
+unchanged) and is passed to Harbor as `--agent-kwarg version=0.22.0`, so a
+rerun of any experiment cannot silently install a different actor. Covered by
+`test_generation_pins_agent_version` (27 tests pass).
+
 ### Next action
 
 Proceed to Stage 8 (safe trajectory renderer and pair builder) using the frozen
