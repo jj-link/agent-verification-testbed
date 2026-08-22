@@ -82,9 +82,50 @@ one official baseline task through the official grader.
 
 ### Commit
 
-- `a0c2d75` (previous); Stage 2 commit to follow.
+- `8c25000` — `feat(tbench): pin Harbor 0.22.0 and document Terminal-Bench 2.0
+  integration`.
 
 ### Next action
 
 Stage 3 — inspect the local Qwen deployment and record exact model, server, and
 hardware identity.
+
+---
+
+## Stage 3 — Local Qwen deployment
+
+**Status:** complete.
+
+### Work
+
+- Inventoried `spark1` (DGX Spark / GB10) hardware and incumbent services.
+- Replaced the incumbent Qwen3.6-35B server with the plan's recipe deployment:
+  `RadixArk/Qwen3.8-27B-NVFP4` served via SGLang DSpark on port 8888.
+- Recorded exact model, checkpoint revision, serving image digest, recipe
+  commit, context, and hardware in `docs/qwen-deployment.md`.
+- Verified the endpoint from the workstation over the private network.
+
+### Decisions
+
+- Used the recipe's `start-dspark.sh` with native 262K context, YaRN off, and
+  `MAX_CONCURRENT_REQUESTS=4`.
+- Took down the prior `Qwen3.6-35B` server (authorized by plan); its full
+  `docker inspect` snapshot is retained on `spark1` for rollback.
+- AVT client endpoint is `http://100.86.3.45:8888/v1` (loopback is on-host
+  health-check only), reflected in `.env.example`.
+
+### Checks
+
+- From the workstation: `/v1/models` → `qwen3.8-27b-sglang`,
+  `max_model_len 262144`.
+- Chat completion round-trip succeeded.
+- Checkpoint revision served: `91cea059647696fd83964e43d57db122ff745993`.
+
+### Commit
+
+- `8c25000` (previous); Stage 3 commit to follow.
+
+### Next action
+
+Stage 4 — validate score-logprob capability (G=5 labels scoreable), via a
+diagnostic against this endpoint.
