@@ -42,6 +42,7 @@ class Experiment:
     seed: int
     task_file: str
     candidates_per_task: int
+    max_parallel: int = 1
 
 
 @dataclass(frozen=True)
@@ -51,7 +52,7 @@ class Generator:
     endpoint: str
     temperature: float
     max_tokens: int
-    agent_timeout_multiplier: float = 1.0
+    timeout_multiplier: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -130,6 +131,7 @@ def load_config(path: str | Path) -> Config:
             seed=_int(exp, "seed"),
             task_file=_str(exp, "task_file"),
             candidates_per_task=_int(exp, "candidates_per_task"),
+            max_parallel=_int(exp, "max_parallel") if "max_parallel" in exp else 1,
         ),
         generator=Generator(
             harness=_str(gen, "harness"),
@@ -137,8 +139,8 @@ def load_config(path: str | Path) -> Config:
             endpoint=_str(gen, "endpoint"),
             temperature=_float(gen, "temperature"),
             max_tokens=_int(gen, "max_tokens"),
-            agent_timeout_multiplier=_float(gen, "agent_timeout_multiplier")
-            if "agent_timeout_multiplier" in gen
+            timeout_multiplier=_float(gen, "timeout_multiplier")
+            if "timeout_multiplier" in gen
             else 1.0,
         ),
         verifier=Verifier(

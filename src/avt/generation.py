@@ -14,6 +14,7 @@ import json
 import os
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -127,8 +128,8 @@ class _HarborRunner:
             "-k",
             "1",
         ]
-        if config.generator.agent_timeout_multiplier > 1:
-            cmd += ["--agent-timeout-multiplier", str(config.generator.agent_timeout_multiplier)]
+        if config.generator.timeout_multiplier > 1:
+            cmd += ["--timeout-multiplier", str(config.generator.timeout_multiplier)]
         cmd += [
             "--mounts",
             mounts,
@@ -288,19 +289,44 @@ class GenerationService:
         # Controller startup: reclaim any crash-left RUNNING jobs so they resume
         # instead of being skipped.
         self.catalog.recover_interrupted()
+        attempts = self._task_attempts()
+        max_parallel = max(1, min(self.config.experiment.max_parallel, len(attempts)))
         results: list[CandidateResult] = []
-        for task, attempt in self._task_attempts():
-            try:
-                results.append(self.generate_one(task, attempt))
-            except InfrastructureFailure:
-                results.append(
-                    CandidateResult(
-                        candidate_id(self.experiment_id(), task, attempt),
-                        task,
-                        attempt,
-                        None,
-                        self.repo_root,
-                        exception="final infrastructure failure",
+        if max_parallel <= 1:
+            for task, attempt in attempts:
+                results.append(self._run_or_record(task, attempt))
+            return results
+        with ThreadPoolExecutor(max_workers=max_parallel) as ex:
+            futs = {
+                ex.submit(self._run_or_record, task, attempt): (task, attempt)
+                for task, attempt in attempts
+            }
+            for fut in as_completed(futs):
+                task, attempt = futs[fut]
+                try:
+                    results.append(fut.result())
+                except InfrastructureFailure:
+                    results.append(
+                        CandidateResult(
+                            candidate_id(self.experiment_id(), task, attempt),
+                            task,
+                            attempt,
+                            None,
+                            self.repo_root,
+                            exception="final infrastructure failure",
+                        )
                     )
-                )
         return results
+
+    def _run_or_record(self, task: str, attempt: int) -> CandidateResult:
+        try:
+            return self.generate_one(task, attempt)
+        except InfrastructureFailure:
+            return CandidateResult(
+                candidate_id(self.experiment_id(), task, attempt),
+                task,
+                attempt,
+                None,
+                self.repo_root,
+                exception="final infrastructure failure",
+            )
