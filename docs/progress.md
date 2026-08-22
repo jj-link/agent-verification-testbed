@@ -259,40 +259,41 @@ three usable candidates per smoke task).
 
 ## Stage 7 — Candidate generation
 
-**Status:** in progress (implementation complete; smoke generation running).
+**Status:** implementation complete (committed); smoke candidate run not yet finished.
 
 ### Work
 
 - Implemented frozen config loading (`config.py`) with `${VAR}` environment
   interpolation and typed accessors.
-- Implemented deterministic seeded task selection (`selection.py`) fetching the
-  task pool from the pinned Terminal-Bench commit.
-- Implemented the generation service (`generation.py`) with persisted, resumable
-  candidate jobs, bounded infrastructure retries, artifact + ground-truth
-  indexing, and Qwen settings derived from the frozen generator config.
-- Added `avt select-tasks` and `avt generate` CLI commands.
-- Selected smoke tasks (seed 42): `distribution-search`, `path-tracing-reverse`.
-
-### Decisions
-
-- `temperature` and `max_tokens` are frozen in the experiment config; the Qwen
-  Code settings mounted into Harbor derive from and are checksum-bound to them.
-- Candidate jobs stay `RUNNING` across internal retry rounds and are marked
-  `PERMANENT_FAILED` only after exhaustion; pre-existing round dirs are reused
-  on resume.
-- Ground truth is immutable: identical rewrites are no-ops, conflicting ones
-  raise.
+- Implemented deterministic seeded task selection (`selection.py`).
+- Implemented the generation service (`generation.py`): persisted, resumable
+  candidate jobs, bounded retries, artifact + immutable ground-truth indexing,
+  config-derived Qwen settings, crash-left RUNNING reclaim at startup, UTF-8
+  subprocess env, and configurable agent-timeout multiplier.
+- Added `avt select-tasks`, `avt generate`; selected smoke tasks
+  `distribution-search`, `path-tracing-reverse` (seed 42).
 
 ### Checks
 
-- 19 tests pass; ruff/mypy clean.
-- `avt select-tasks` wrote smoke/pilot/main task files deterministically.
+- 22 tests pass; ruff/mypy clean.
+- Generation job lifecycle (retry, resume, reuse, timeout rejection) covered.
+
+### Findings / blockers for completion
+
+- The selected smoke tasks are hard (expert ~120 min); the local 27B actor
+  exceeds the default 900 s agent timeout, so candidates time out before a
+  grade. A 3× agent-timeout multiplier was added, but the 3-candidate × 2-task
+  smoke run is a multi-hour job and recurring orphaned Harbor trial containers
+  caused contention.
+- The three-candidates-per-smoke-task acceptance is therefore **not yet met**
+  pending a completed background run.
 
 ### Commit
 
-- `6b079cc` (previous); Stage 7 commit to follow.
+- `6b079cc`, `87eb8b9` (Stage 6/7 init), `6e4d949` (reclaim fix),
+  `57f4063` (UTF-8 fix), `ec86d06` (timeout multiplier).
 
 ### Next action
 
-Run `avt generate` for the smoke tasks to produce three usable candidates each,
-then record the run and commit.
+Complete the smoke candidate generation run (multi-hour, resumable) to yield
+three usable candidates per smoke task, then proceed to Stage 8.
