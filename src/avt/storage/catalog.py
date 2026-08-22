@@ -339,6 +339,44 @@ class CatalogConnection:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def record_evaluation(
+        self,
+        candidate_id_: str,
+        aggregate_raw: float,
+        aggregate_normalized: float,
+        criteria: str,
+        observations: int,
+    ) -> None:
+        """Record a candidate's three-criterion aggregate immutably."""
+        row = self._conn.execute(
+            "SELECT aggregate_raw, aggregate_normalized, criteria, observations "
+            "FROM evaluation WHERE candidate_id=?",
+            (candidate_id_,),
+        ).fetchone()
+        incoming = (aggregate_raw, aggregate_normalized, criteria, observations)
+        if row is not None:
+            current = (row[0], row[1], row[2], row[3])
+            if current != incoming:
+                raise ValueError(
+                    f"evaluation conflict for {candidate_id_!r}: "
+                    f"existing {current!r} vs new {incoming!r}"
+                )
+            return
+        self._conn.execute(
+            "INSERT INTO evaluation(candidate_id, aggregate_raw, aggregate_normalized, "
+            "criteria, observations, created_at) VALUES(?,?,?,?,?,?)",
+            (candidate_id_, aggregate_raw, aggregate_normalized, criteria, observations, _now()),
+        )
+        self._conn.commit()
+
+    def list_evaluation(self, candidate_id_: str) -> dict[str, object] | None:
+        row = self._conn.execute(
+            "SELECT candidate_id, aggregate_raw, aggregate_normalized, criteria, observations "
+            "FROM evaluation WHERE candidate_id=?",
+            (candidate_id_,),
+        ).fetchone()
+        return dict(row) if row else None
+
     def list_verifications(self) -> list[dict[str, object]]:
         rows = self._conn.execute(
             "SELECT verification_id, pair_id, criterion, repetition, display_order, "

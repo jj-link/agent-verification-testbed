@@ -33,6 +33,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_exp = sub.add_parser("expected-scores", help="compute continuous expected scores")
     p_exp.add_argument("--config", required=True, help="experiment config path")
 
+    p_eval = sub.add_parser("evaluate", help="compute three-criterion aggregate scores")
+    p_eval.add_argument("--config", required=True, help="experiment config path")
+
     return parser
 
 
@@ -111,6 +114,15 @@ def main(argv: list[str] | None = None) -> int:
         cfg = load_config(args.config)
         recs = ContinuousVerifier(cfg, Path.cwd()).compute()
         print(f"expected-score records: {len(recs)}")
+        return 0
+
+    if args.command == "evaluate":
+        from avt.config import load_config
+        from avt.evaluation import Evaluator
+
+        cfg = load_config(args.config)
+        records = Evaluator(cfg, Path.cwd()).evaluate()
+        print(f"evaluated {len(records)} candidates")
         return 0
 
     parser.error(f"unknown command: {args.command}")

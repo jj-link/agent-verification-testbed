@@ -517,7 +517,41 @@ computed for the frozen pool.
   `src/avt/storage/schema.py`, `src/avt/storage/catalog.py`, `src/avt/cli.py`,
   `tests/test_expected.py`, `tests/test_verification.py`.
 
+## Stage 11 — Three-criterion evaluation
+
+**Status:** complete. Criterion and aggregate scores computed reproducibly for
+the frozen pool.
+
+### Work
+
+- `src/avt/evaluation.py`: `Evaluator` aggregates each candidate's Stage-10
+  per-criterion expected scores into a single reproducible score over the
+  configured criteria (specification, output, errors),
+  `aggregate_raw = mean_c raw_expected_score_c`, `normalized =
+  (aggregate_raw - 1)/(G - 1)`. Requires complete criterion coverage for every
+  frozen candidate; a missing criterion raises `EvaluationError` (visible
+  failure).
+- Schema: `evaluation(candidate_id, aggregate_raw, aggregate_normalized,
+  criteria, observations)`; catalog `record_evaluation` / `list_evaluation`
+  (immutable).
+- CLI: `avt evaluate --config …`.
+
+### Checks
+
+- `uv run pytest -q` — 58 passed (new: three-criterion aggregate math,
+  reproducibility of a rerun, missing-criterion failure).
+- `uv run ruff check .` / `ruff format --check .` — clean.
+- `uv run mypy .` — no issues (26 source files).
+- Verified on `smoke-rtx-v3`: `avt evaluate` produced 6 aggregate records
+  (3 criteria, 6 observations each), aggregate_raw ∈ [1, 5],
+  normalized ∈ [0, 1].
+
+### Commit
+
+- Stage 11: `src/avt/evaluation.py`, `src/avt/storage/schema.py`,
+  `src/avt/storage/catalog.py`, `src/avt/cli.py`, `tests/test_evaluation.py`.
+
 ### Next action
 
-Proceed to Stage 11 (three-criterion evaluation) using the frozen
-`smoke-rtx-v3` expected scores.
+Proceed to Stage 12 (round-robin ranker) using the frozen `smoke-rtx-v3`
+scores.

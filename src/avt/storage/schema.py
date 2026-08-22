@@ -110,6 +110,16 @@ CREATE TABLE IF NOT EXISTS expected_scores (
     FOREIGN KEY (candidate_id) REFERENCES candidates(candidate_id)
 );
 
+CREATE TABLE IF NOT EXISTS evaluation (
+    candidate_id        TEXT PRIMARY KEY,
+    aggregate_raw       REAL NOT NULL,
+    aggregate_normalized REAL NOT NULL,
+    criteria            TEXT NOT NULL,
+    observations        INTEGER NOT NULL,
+    created_at          TEXT NOT NULL,
+    FOREIGN KEY (candidate_id) REFERENCES candidates(candidate_id)
+);
+
 CREATE TABLE IF NOT EXISTS rankings (
     ranking_id      TEXT PRIMARY KEY,
     task_id         TEXT NOT NULL,
