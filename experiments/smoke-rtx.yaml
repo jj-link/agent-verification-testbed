@@ -1,0 +1,43 @@
+experiment:
+  name: smoke-rtx-v1
+  seed: 42
+  task_file: experiments/smoke_tasks.txt
+  candidates_per_task: 3
+  max_parallel: 6
+
+upstream:
+  terminal_bench_commit: 69671fbaac6d67a7ef0dfec016cc38a64ef7a77c
+  harbor_commit: 4407eb5227a2ff4f0d3f16b2eb48849382fdf276
+
+generator:
+  harness: qwen-coder
+  model: qwen3.8-27b-sglang
+  # Local RTX 6000 Pro deployment. host.docker.internal resolves for the
+  # in-container qwen-code actor (loopback would be the task container itself).
+  endpoint: http://host.docker.internal:8000/v1
+  temperature: 0.7
+  max_tokens: 8192
+  timeout_multiplier: 100000
+
+verifier:
+  model: qwen3.8-27b-sglang
+  endpoint: http://host.docker.internal:8000/v1
+  criteria:
+    - specification
+    - output
+    - errors
+  granularity: 5
+  repetitions: 1
+
+rendering:
+  max_pair_context_tokens: 120000
+  oversized_output_policy: head_tail
+
+ranking:
+  method: round_robin_bradley_terry
+  minimum_pair_coverage: 1.0
+
+storage:
+  root: .avt/smoke-rtx/
+  metadata_db: .avt/smoke-rtx/experiment.sqlite
+  ground_truth_db: .avt/smoke-rtx/ground_truth.sqlite

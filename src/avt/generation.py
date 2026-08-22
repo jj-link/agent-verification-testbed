@@ -55,14 +55,13 @@ def qwen_settings_for(config: Config) -> dict[str, object]:
         "temperature": config.generator.temperature,
         "max_tokens": config.generator.max_tokens,
     }
-    return {
-        "model": {
-            "generationConfig": {
-                "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
-                "samplingParams": sampling,
-            }
-        }
+    generation_config: dict[str, object] = {
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+        "samplingParams": sampling,
     }
+    if config.generator.context_window is not None:
+        generation_config["contextWindowSize"] = config.generator.context_window
+    return {"model": {"generationConfig": generation_config}}
 
 
 class _HarborRunner:
@@ -146,7 +145,13 @@ class _HarborRunner:
             "--yes",
         ]
         result = subprocess.run(
-            cmd, cwd=self.repo_root, capture_output=True, text=True, env=self.harbor_env()
+            cmd,
+            cwd=self.repo_root,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=self.harbor_env(),
         )
         job_dir = out_dir / job_name
         if result.returncode != 0 or not job_dir.is_dir():
@@ -211,8 +216,16 @@ class GenerationService:
         with self.catalog.connect() as scoped:
             job = scoped.enqueue_or_claim(_JOB_TYPE, cand, {"task": task_id, "attempt": attempt})
             if job is None:
-                # Already SUCCEEDED (skip) or claimed concurrently.
-                return CandidateResult(cand, task_id, attempt, None, self.repo_root)
+                # Already SUCCEEDED (skip) or claimed concurrently. For an
+                # idempotent rerun of a complete pool, recover the frozen
+                # ground-truth reward so the outcome reads as graded (not FAILED).
+                with self.ground_truth.connect() as gt:
+                    rec = gt.get(cand, task_id)
+                reward: float | None = None
+                rw = rec.get("reward") if rec else None
+                if isinstance(rw, (int, float)):
+                    reward = float(rw)
+                return CandidateResult(cand, task_id, attempt, reward, self.repo_root)
             # Keep the job RUNNING across internal retry rounds; only mark
             # terminal state (SUCCEEDED / PERMANENT_FAILED) after the loop.
 

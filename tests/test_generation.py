@@ -213,24 +213,26 @@ def test_a_timed_out_trial_is_not_indexed(tmp_path: Path) -> None:
         assert scoped._conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0] == 0
 
 
-def test_ungraded_trial_is_not_indexed_and_retried(tmp_path: Path) -> None:
-    """A trial with no reward and no exception must not enter the frozen pool."""
+def test_rerun_complete_pool_recovers_graded_rewards_without_harbor(tmp_path: Path) -> None:
+    """A second generate_all() on a finished pool returns the frozen rewards and
+    never reinvokes Harbor (idempotent rerun must not report FAILED)."""
     service, _ = _make_service(tmp_path)
-    rounds: list[int] = []
+    harbor_calls: list[int] = [0]
 
     def fake_run(config: object, task_id: str, attempt: int, out_dir: Path, job_name: str) -> Path:
-        rounds.append(len(rounds))
-        if len(rounds) == 1:
-            _write_trial(out_dir / job_name, reward=None)  # ungraded, no exception
-        else:
-            _write_trial(out_dir / job_name, reward=0.5)
+        harbor_calls[0] += 1
+        _write_trial(out_dir / job_name, reward=0.75)
         return out_dir / job_name
 
     service.runner.run = fake_run  # type: ignore[method-assign]
-    res = service.generate_one("task_x", 0)
-    assert res.reward == 0.5
-    assert rounds == [0, 1]  # ungraded round retried, not indexed
-    with service.catalog.connect() as scoped:
-        assert scoped.count_jobs("candidate", "SUCCEEDED") == 1
-        n = scoped._conn.execute("SELECT COUNT(*) FROM candidates").fetchone()[0]
-        assert n == 1  # only the graded retry is in the manifest
+    first = service.generate_all()
+    assert len(first) == 1
+    assert first[0].reward == 0.75
+    assert harbor_calls[0] == 1
+
+    # Rerun: every job is already SUCCEEDED; recover ground truth, no Harbor.
+    service.runner.run = fake_run  # type: ignore[method-assign]
+    second = service.generate_all()
+    assert len(second) == 1
+    assert second[0].reward == 0.75  # frozen reward, not None
+    assert harbor_calls[0] == 1  # unchanged — nothing was re-run

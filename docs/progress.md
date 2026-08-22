@@ -308,7 +308,69 @@ calls hit the spark1 endpoint).
 - (manifest-indexing fix and this status update are in the current working
   commit)
 
+### RTX pivot — Stage 7 acceptance met
+
+**Status:** complete. Six candidates (three per smoke task) generated and
+officially graded on the local RTX 6000 Pro.
+
+#### Decisions
+
+- **Host pivot.** The Spark DGX hosts are `aarch64` but the task images are
+  `linux/amd64`, so generation stays on the x86_64 workstation Docker. Model
+  serving moved from spark1 to the workstation's own **RTX PRO 6000** via a
+  local LMW deployment, so generation no longer depends on the Spark model.
+- **Deployment.** WSL-specific SGLang crash (multimodal CUDA IPC returning
+  `invalid resource handle`) fixed by `--mm-feature-transport cpu` in the pinned
+  recipe `qwen38-27b-radixark-nvfp4-dflash2-avt` (bumped to `1.0.1`);
+  `lmw recipe validate` reports `valid:true`. Endpoint verified:
+  `qwen3.8-27b-6000pro` (SGLang, 262144 context), incl. a thinking-disabled
+  completion returning `AVTREADY-OK`.
+- **In-container endpoint.** The qwen actor runs inside each task container, so
+  loopback is the container. Generation uses
+  `http://host.docker.internal:8000/v1` (verified from a throwaway container).
+- **Context-window mismatch (root cause of the earlier `path-tracing-reverse`
+  failures).** qwen-code assumes a 1,000,000-token window while the server
+  ceiling is 262,144; the actor replays full history, so long runs cross the
+  ceiling and SGLang returns HTTP 400 (`[API Error: 400 (no body)]`), after
+  which qwen aborts via `UnknownApiError`/`NonZeroAgentExitCodeError`. Fixed by
+  setting `model.generationConfig.contextWindowSize=200000` in the mounted qwen
+  settings (now part of the frozen config via `generator.context_window`) so
+  auto-compaction triggers before the ceiling. Verified a 220k-token request
+  returns 200.
+- **Task reselection (user-approved).** `path-tracing-reverse` sits past the 27B
+  actor's capability (most runs abort via the agent guard; only a rare clean
+  stop yields a usable `0.0`). Per explicit user decision (outside the frozen
+  pool), replaced it with `cancel-async-tasks` (known feasible — the Stage 5
+  actor run graded `1.0`). New experiment `smoke-rtx-v3` with its own storage
+  root; the `smoke-v1` (spark1), `smoke-rtx` (v1), and `smoke-rtx-v2` pools are
+  preserved untouched.
+- **Subprocess UTF-8 decode.** `subprocess.run(..., text=True)` crashed on
+  non-cp1252 bytes; fixed with `encoding="utf-8", errors="replace"`.
+
+#### Candidates (smoke-rtx-v3, exp `6a774416…`)
+
+- `distribution-search`: attempts 0,1,2 → reward `1.0, 1.0, 1.0`
+- `cancel-async-tasks`: attempts 0,1,2 → reward `0.0, 0.0, 1.0`
+- All six candidates SUCCEEDED with an official verifier reward
+  (`official_results`), satisfying the Stage 7 acceptance ("three candidates for
+  each smoke task").
+
+#### Checks
+
+- `uv run pytest -q` — 26 passed (incl. an idempotent-rerun test).
+- `uv run ruff check .` / `ruff format --check .` — clean (scratch files removed).
+- `uv run mypy .` — no issues (16 source files).
+
+#### Commit
+
+- Code: `src/avt/config.py` (`generator.context_window`), `src/avt/generation.py`
+  (`contextWindowSize` in mounted qwen settings; UTF-8 subprocess decode;
+  recovered frozen reward on idempotent rerun of a complete pool).
+- Frozen configs: `experiments/smoke-rtx.yaml` (v1),
+  `experiments/smoke-rtx-v2.yaml`, `experiments/smoke-rtx-v3-tasks.txt`,
+  `experiments/smoke-rtx-v3.yaml`.
+
 ### Next action
 
-Finish the running smoke generation (multi-hour, resumable) to yield three
-usable candidates per smoke task, then proceed to Stage 8.
+Proceed to Stage 8 (safe trajectory renderer and pair builder) using the frozen
+`smoke-rtx-v3` candidate pool.

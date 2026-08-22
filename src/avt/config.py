@@ -53,6 +53,7 @@ class Generator:
     temperature: float
     max_tokens: int
     timeout_multiplier: float = 1.0
+    context_window: int | None = None
 
 
 @dataclass(frozen=True)
@@ -142,6 +143,7 @@ def load_config(path: str | Path) -> Config:
             timeout_multiplier=_float(gen, "timeout_multiplier")
             if "timeout_multiplier" in gen
             else 1.0,
+            context_window=_int(gen, "context_window") if "context_window" in gen else None,
         ),
         verifier=Verifier(
             model=_str(ver, "model"),
