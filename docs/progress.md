@@ -430,6 +430,49 @@ public instruction per task, else it fails loudly and never marks `PAIRED` from
 an incomplete pool. Covered by conflict and incomplete-pool tests (41 pass,
 ruff/mypy clean).
 
+## Stage 9 — Discrete Qwen judge
+
+**Status:** complete. Every smoke pair received a valid score.
+
+### Work
+
+- `src/avt/verification.py`: discrete Qwen judge (plan §13.1-13.3). One model
+  request per (pair, criterion) reads the probability the model places on the
+  single-token score labels `"1".."5"` (G=5) for trajectory A and trajectory B
+  from the response `top_logprobs`; the discrete score is each trajectory's
+  highest-probability label. The request contains only the public task
+  description and the two rendered trajectories — no grader outcome, hidden
+  tests, reference solution, or pass/fail labels.
+- Score labels validated on the RTX endpoint: SGLang returns per-token
+  `top_logprobs` including all five labels (single-token). Missing-label
+  probabilities raise `MissingLabelError` (configuration failure, never silent
+  zero), per §13.2.
+- The judge runs host-side, so `host.docker.internal` (a container-only alias) is
+  mapped to `127.0.0.1`; the frozen config / experiment id stays stable.
+- Paired prompt uses the stored public task instruction (Stage 8) and each
+  candidate's rendered body (Stage 8 renderer).
+- `avt verify-pairs --config …`; per-(pair,criterion) records persisted to
+  `verifications` with request/response/scores artifacts (immutable).
+- `avt.pairs.display_order` assigns the deterministic A/B display order stored in
+  each verification's `display_order` column.
+
+### Checks
+
+- `uv run pytest -q` — 49 passed (8 new: prompt content/no-grader, endpoint
+  normalization, logprob score extraction, separator-skip, missing-label config
+  failure, malformed verifier, judge verify+persist).
+- `uv run ruff check .` / `ruff format --check .` — clean.
+- `uv run mypy .` — no issues (22 source files).
+- Verified on the frozen `smoke-rtx-v3` pool: `avt verify-pairs` produced 18
+  verification records (6 pairs × 3 criteria), all `SUCCEEDED` with valid
+  integer scores; experiment stage advanced to `VERIFIED`.
+
+### Commit
+
+- Stage 9: `src/avt/verification.py`, `src/avt/storage/catalog.py`
+  (`record_verification`), `src/avt/cli.py` (`verify-pairs`), tests.
+
 ### Next action
 
-Proceed to Stage 9 (discrete Qwen judge) using the frozen `smoke-rtx-v3` pairs.
+Proceed to Stage 10 (continuous Qwen verifier) using the frozen `smoke-rtx-v3`
+pairs.

@@ -256,6 +256,51 @@ class CatalogConnection:
         )
         self._conn.commit()
 
+    def record_verification(
+        self,
+        verification_id_: str,
+        pair_id: str,
+        criterion: str,
+        repetition: int,
+        display_order_: str,
+        status: str,
+        request_path: str | None,
+        response_path: str | None,
+        scores_path: str | None,
+    ) -> None:
+        """Upsert a verification record. Idempotent: identical rewrites are a
+        no-op; any conflict raises so a frozen verification row is immutable."""
+        row = self._conn.execute(
+            "SELECT pair_id, criterion, repetition, display_order, status, "
+            "request_path, response_path, scores_path FROM verifications "
+            "WHERE verification_id=?",
+            (verification_id_,),
+        ).fetchone()
+        if row is not None:
+            current = (
+                row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7],
+            )
+            incoming = (
+                pair_id, criterion, repetition, display_order_, status,
+                request_path, response_path, scores_path,
+            )
+            if current != incoming:
+                raise ValueError(
+                    f"verification conflict for {verification_id_!r}: "
+                    f"existing {current!r} vs new {incoming!r}"
+                )
+            return
+        self._conn.execute(
+            "INSERT INTO verifications(verification_id, pair_id, criterion, "
+            "repetition, display_order, status, request_path, response_path, "
+            "scores_path, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (
+                verification_id_, pair_id, criterion, repetition, display_order_,
+                status, request_path, response_path, scores_path, _now(),
+            ),
+        )
+        self._conn.commit()
+
     def list_pairs(self, experiment_id: str, task_id: str) -> list[dict[str, object]]:
         rows = self._conn.execute(
             "SELECT pair_id, candidate_a, candidate_b, status FROM pairs "

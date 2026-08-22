@@ -27,6 +27,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_pairs = sub.add_parser("build-pairs", help="build frozen candidate pairs")
     p_pairs.add_argument("--config", required=True, help="experiment config path")
 
+    p_verify = sub.add_parser("verify-pairs", help="run the discrete judge over pairs")
+    p_verify.add_argument("--config", required=True, help="experiment config path")
+
     return parser
 
 
@@ -86,6 +89,16 @@ def main(argv: list[str] | None = None) -> int:
         builder = PairBuilder(cfg, Path.cwd())
         pair_ids = builder.build()
         print(f"built {len(pair_ids)} pairs")
+        return 0
+
+    if args.command == "verify-pairs":
+        from avt.config import load_config
+        from avt.verification import DiscreteJudge
+
+        cfg = load_config(args.config)
+        judge = DiscreteJudge(cfg, Path.cwd())
+        scores = judge.verify_all()
+        print(f"verified {len(scores)} pair-scores")
         return 0
 
     parser.error(f"unknown command: {args.command}")
