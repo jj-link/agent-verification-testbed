@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from avt.config import load_config
 from avt.pairs import PairBuilder, display_order
 from avt.storage.ids import candidate_id
@@ -54,6 +56,7 @@ def _seed(builder: PairBuilder, task: str, n: int) -> list[str]:
     exp = builder.exp
     with builder.catalog.connect() as scoped:
         scoped.upsert_experiment_config(exp, {}, "GENERATED")
+        scoped.record_task(exp, task, "PUBLIC INSTRUCTION")
         for i in range(n):
             cid = candidate_id(exp, task, i)
             scoped.record_candidate(cid, exp, task, i, "SUCCEEDED", None, None)
@@ -89,9 +92,7 @@ def test_pair_id_is_unordered(tmp_path: Path) -> None:
     p = ids[:2]  # canonical unordered pair, checked in both orders
     from avt.storage.ids import pair_id
 
-    assert pair_id(builder.exp, "task_x", p) == pair_id(
-        builder.exp, "task_x", (p[1], p[0])
-    )
+    assert pair_id(builder.exp, "task_x", p) == pair_id(builder.exp, "task_x", (p[1], p[0]))
 
 
 def test_build_is_idempotent(tmp_path: Path) -> None:
@@ -104,10 +105,15 @@ def test_build_is_idempotent(tmp_path: Path) -> None:
     assert len(_pair_rows(builder)) == before  # no duplicates
 
 
-def test_skips_task_with_single_candidate(tmp_path: Path) -> None:
+def test_incomplete_pool_raises(tmp_path: Path) -> None:
     builder = _make(tmp_path, tasks=("task_alone",))
-    _seed(builder, "task_alone", 1)
-    assert builder.build() == []
+    _seed(builder, "task_alone", 1)  # need 3, have 1
+    with pytest.raises(ValueError):
+        builder.build()
+
+    # nothing was marked PAIRED
+    with builder.catalog.connect() as scoped:
+        assert scoped.get_experiment_stage(builder.exp) != "PAIRED"
 
 
 def test_display_order_deterministic_and_unbiased(tmp_path: Path) -> None:
@@ -117,9 +123,7 @@ def test_display_order_deterministic_and_unbiased(tmp_path: Path) -> None:
     assert display_order(a, b, 42) == first  # deterministic
     # across many pairs we see both orientations (sanity, not a statistical claim)
     orders = {
-        display_order(f"cand_{i}", f"cand_{j}", 42)
-        for i in range(1, 20)
-        for j in range(i + 1, 20)
+        display_order(f"cand_{i}", f"cand_{j}", 42) for i in range(1, 20) for j in range(i + 1, 20)
     }
     aas = {o[0] for o in orders if o[0] > o[1]}
     bbs = {o[0] for o in orders if o[0] < o[1]}
@@ -132,3 +136,35 @@ def test_experiment_stage_paired(tmp_path: Path) -> None:
     builder.build()
     with builder.catalog.connect() as scoped:
         assert scoped.get_experiment_stage(builder.exp) == "PAIRED"
+
+
+def test_conflicting_instruction_raises(tmp_path: Path) -> None:
+    builder = _make(tmp_path)
+    _seed(builder, "task_x", 3)  # records "PUBLIC INSTRUCTION"
+    # identical rewrite is a no-op
+    with builder.catalog.connect() as scoped:
+        scoped.record_task(builder.exp, "task_x", "PUBLIC INSTRUCTION")
+    # a conflicting instruction raises (frozen record)
+    with pytest.raises(ValueError), builder.catalog.connect() as scoped:
+        scoped.record_task(builder.exp, "task_x", "DIFFERENT")
+
+
+def test_incomplete_pool_never_marks_paired(tmp_path: Path) -> None:
+    builder = _make(tmp_path)
+    _seed(builder, "task_x", 2)  # need 3
+    with pytest.raises(ValueError):
+        builder.build()
+    with builder.catalog.connect() as scoped:
+        assert scoped.get_experiment_stage(builder.exp) != "PAIRED"
+
+
+def test_build_is_idempotent_and_frozen(tmp_path: Path) -> None:
+    builder = _make(tmp_path)
+    _seed(builder, "task_x", 3)
+    builder.build()
+    rows = _pair_rows(builder)
+    # a conflicting re-write of an existing pair raises (frozen)
+    pid = rows[0][0]
+    a, b = rows[0][1], rows[0][2]
+    with pytest.raises(ValueError), builder.catalog.connect() as scoped:
+        scoped.record_pair(pid, builder.exp, "task_x", b, a, "PAIRED")

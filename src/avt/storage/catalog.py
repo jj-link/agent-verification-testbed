@@ -185,10 +185,24 @@ class CatalogConnection:
         self._conn.commit()
 
     def record_task(self, experiment_id: str, task_id: str, instruction: str) -> None:
-        """Upsert a task and its public instruction (idempotent)."""
+        """Record a task's public instruction immutably.
+
+        Identical rewrites are a no-op; a conflicting instruction raises so a
+        frozen pool can never be silently changed.
+        """
+        row = self._conn.execute(
+            "SELECT instruction FROM tasks WHERE experiment_id=? AND task_id=?",
+            (experiment_id, task_id),
+        ).fetchone()
+        if row is not None:
+            if (row[0] or "") != instruction:
+                raise ValueError(
+                    f"task instruction conflict for {task_id!r}: "
+                    f"existing {row[0]!r} vs new {instruction!r}"
+                )
+            return
         self._conn.execute(
-            "INSERT INTO tasks(experiment_id, task_id, instruction) VALUES(?,?,?) "
-            "ON CONFLICT(experiment_id, task_id) DO UPDATE SET instruction=excluded.instruction",
+            "INSERT INTO tasks(experiment_id, task_id, instruction) VALUES(?,?,?)",
             (experiment_id, task_id, instruction),
         )
         self._conn.commit()
@@ -218,13 +232,26 @@ class CatalogConnection:
         candidate_b: str,
         status: str,
     ) -> None:
-        """Upsert a frozen candidate pair (idempotent). candidate_a/b are the
-        deterministic A/B display order; the pair identity is the unordered hash."""
+        """Record a frozen candidate pair immutably.
+
+        Identical rewrites are a no-op; any conflict raises so the frozen pair
+        records can never be silently mutated on rerun. candidate_a/b are the
+        canonical sorted membership; A/B display order lives per-verification.
+        """
+        row = self._conn.execute(
+            "SELECT task_id, candidate_a, candidate_b, status FROM pairs WHERE pair_id=?",
+            (pair_id,),
+        ).fetchone()
+        if row is not None:
+            if (row[0], row[1], row[2], row[3]) != (task_id, candidate_a, candidate_b, status):
+                raise ValueError(
+                    f"pair conflict for {pair_id!r}: existing {row!r} vs "
+                    f"new {(task_id, candidate_a, candidate_b, status)!r}"
+                )
+            return
         self._conn.execute(
             "INSERT INTO pairs(pair_id, experiment_id, task_id, candidate_a, "
-            "candidate_b, status, created_at) VALUES(?,?,?,?,?,?,?) "
-            "ON CONFLICT(pair_id) DO UPDATE SET candidate_a=excluded.candidate_a, "
-            "candidate_b=excluded.candidate_b, status=excluded.status",
+            "candidate_b, status, created_at) VALUES(?,?,?,?,?,?,?)",
             (pair_id, experiment_id, task_id, candidate_a, candidate_b, status, _now()),
         )
         self._conn.commit()

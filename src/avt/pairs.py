@@ -76,9 +76,20 @@ class PairBuilder:
                 continue
         return None
 
-    def _record_task(self, task_id: str, instruction: str | None) -> None:
+    def _get_instruction(self, task_id: str) -> str:
+        """Public task instruction: from a candidate's ATIF, else the stored row."""
+        instr = self._instruction_for(task_id)
+        if instr and instr.strip():
+            return instr
         with self.catalog.connect() as scoped:
-            scoped.record_task(self.exp, task_id, instruction or "")
+            stored = scoped.get_task_instruction(self.exp, task_id)
+        if stored and stored.strip():
+            return stored
+        raise ValueError(f"{task_id}: missing public instruction")
+
+    def _record_task(self, task_id: str, instruction: str) -> None:
+        with self.catalog.connect() as scoped:
+            scoped.record_task(self.exp, task_id, instruction)
 
     def _record_pair(self, pair: tuple[str, str], task_id: str) -> str:
         pid = pair_id(self.exp, task_id, pair)
@@ -89,15 +100,22 @@ class PairBuilder:
         return pid
 
     def build(self) -> list[str]:
-        """Build frozen pairs for every task with >= 2 candidates."""
+        """Build frozen pairs for every task.
+
+        A task must have exactly ``candidates_per_task`` SUCCEEDED candidates and
+        a nonempty public instruction; otherwise the pool is incomplete and the
+        job fails loudly (never a partial pair set silently marked PAIRED).
+        """
         tasks = read_task_names(self.config.experiment.task_file)
+        required = self.config.experiment.candidates_per_task
         built: list[str] = []
         for task in tasks:
             cands = self._list_candidates(task)
             ids = sorted(str(c["candidate_id"]) for c in cands)
-            if len(ids) < 2:
-                continue
-            self._record_task(task, self._instruction_for(task))
+            if len(ids) != required:
+                raise ValueError(f"{task}: pool has {len(ids)} candidates, require {required}")
+            instruction = self._get_instruction(task)
+            self._record_task(task, instruction)
             for pair in combinations(ids, 2):
                 built.append(self._record_pair(pair, task))
         with self.catalog.connect() as scoped:

@@ -421,6 +421,15 @@ unit tests pass.
 
 - 6d11a7d, 1581b4d (Stage 7 + actor-version pin).
 
+### Integrity hardening (follow-up)
+
+`record_task`/`record_pair` are now immutable (insert-or-validate-identical:
+an identical rewrite is a no-op, any conflict raises). `PairBuilder.build`
+requires exactly `candidates_per_task` SUCCEEDED candidates and a nonempty
+public instruction per task, else it fails loudly and never marks `PAIRED` from
+an incomplete pool. Covered by conflict and incomplete-pool tests (41 pass,
+ruff/mypy clean).
+
 ### Next action
 
 Proceed to Stage 9 (discrete Qwen judge) using the frozen `smoke-rtx-v3` pairs.
