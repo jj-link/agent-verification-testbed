@@ -9,6 +9,7 @@ import pytest
 
 from avt.config import load_config
 from avt.generation import GenerationService, InfrastructureFailure
+from avt.storage.ids import candidate_id as cid
 
 CONFIG_YAML = """
 experiment:
@@ -70,12 +71,11 @@ def _make_service(tmp_path: Path) -> tuple[GenerationService, Path]:
     cfg_path.write_text(cfg_text, encoding="utf-8")
     (tmp_path / "tasks.txt").write_text("task_x\n", encoding="utf-8")
     cfg = load_config(cfg_path)
-    service = GenerationService(cfg, tmp_path)
-    return service, tmp_path
+    return GenerationService(cfg, tmp_path), tmp_path
 
 
 def test_fail_then_success_retry_bookkeeping(tmp_path: Path) -> None:
-    service, root = _make_service(tmp_path)
+    service, _ = _make_service(tmp_path)
     calls: list[int] = [0]
 
     def fake_run(config: object, task_id: str, attempt: int, out_dir: Path, job_name: str) -> Path:
@@ -88,7 +88,6 @@ def test_fail_then_success_retry_bookkeeping(tmp_path: Path) -> None:
     service.runner.run = fake_run  # type: ignore[method-assign]
     res = service.generate_one("task_x", 0)
     assert res.reward == 1.0
-    # Two internal rounds ran, but the logical job is one row and SUCCEEDED.
     with service.catalog.connect() as scoped:
         assert scoped.count_jobs("candidate", "SUCCEEDED") == 1
     assert calls[0] == 2
@@ -109,7 +108,6 @@ def test_exhausted_retries_mark_permanent(tmp_path: Path) -> None:
 
 def test_resume_reuses_pre_existing_round(tmp_path: Path) -> None:
     service, root = _make_service(tmp_path)
-    # Pre-create round 0 job dir with a completed trial (as if a prior crash finished it).
     round0 = root / "avt/generation/task_x/0/0/gen-task_x-0-0"
     _write_trial(round0, reward=0.0)
     calls: list[int] = [0]
@@ -121,20 +119,19 @@ def test_resume_reuses_pre_existing_round(tmp_path: Path) -> None:
     service.runner.run = fake_run  # type: ignore[method-assign]
     res = service.generate_one("task_x", 0)
     assert res.reward == 0.0  # valid failed candidate is graded, not discarded
-    assert calls[0] == 0  # no new harbor run
+    assert calls[0] == 0
     with service.catalog.connect() as scoped:
         assert scoped.count_jobs("candidate", "SUCCEEDED") == 1
 
 
 def test_agent_timeout_trial_is_rejected_and_retried(tmp_path: Path) -> None:
     """A timed-out trial must NOT be indexed as a successful candidate."""
-    service, root = _make_service(tmp_path)
+    service, _ = _make_service(tmp_path)
     rounds: list[int] = []
 
     def fake_run(config: object, task_id: str, attempt: int, out_dir: Path, job_name: str) -> Path:
         round_no = len(rounds)
         rounds.append(round_no)
-        # First produced round times out; second produces a graded trial.
         if round_no == 0:
             _write_trial(out_dir / job_name, reward=1.0, exc="AgentTimeoutError")
         else:
@@ -144,7 +141,28 @@ def test_agent_timeout_trial_is_rejected_and_retried(tmp_path: Path) -> None:
     service.runner.run = fake_run  # type: ignore[method-assign]
     res = service.generate_one("task_x", 0)
     assert res.reward == 1.0
-    assert rounds == [0, 1]  # two distinct round directories, retry advanced
+    assert rounds == [0, 1]
     with service.catalog.connect() as scoped:
         assert scoped.count_jobs("candidate", "SUCCEEDED") == 1
         assert scoped.count_jobs("candidate", "PERMANENT_FAILED") == 0
+
+
+def test_generate_all_reclaims_crash_left_running(tmp_path: Path) -> None:
+    """A crash-left RUNNING job is reclaimed and completed on a fresh controller start."""
+    service, _ = _make_service(tmp_path)
+    cand = cid(service.experiment_id(), "task_x", 0)
+    with service.catalog.connect() as scoped:
+        scoped.enqueue_job("candidate", cand, {"task": "task_x", "attempt": 0})
+        assert scoped.claim_job("candidate", cand) is not None  # simulate crash (leave RUNNING)
+    calls: list[int] = [0]
+
+    def fake_run(config: object, task_id: str, attempt: int, out_dir: Path, job_name: str) -> Path:
+        calls[0] += 1
+        _write_trial(out_dir / job_name, reward=1.0)
+        return out_dir / job_name
+
+    service.runner.run = fake_run  # type: ignore[method-assign]
+    results = service.generate_all()
+    assert results[0].reward == 1.0
+    with service.catalog.connect() as scoped:
+        assert scoped.count_jobs("candidate", "SUCCEEDED") == 1

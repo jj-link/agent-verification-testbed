@@ -269,6 +269,9 @@ class GenerationService:
             g.put(cand, task_id, reward, {"reward": reward})
 
     def generate_all(self) -> list[CandidateResult]:
+        # Controller startup: reclaim any crash-left RUNNING jobs so they resume
+        # instead of being skipped.
+        self.catalog.recover_interrupted()
         results: list[CandidateResult] = []
         for task, attempt in self._task_attempts():
             try:
