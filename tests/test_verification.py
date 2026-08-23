@@ -513,3 +513,61 @@ def test_verifier_max_tokens_configurable(tmp_path: Path, monkeypatch: pytest.Mo
     assert "max_tokens" in judge._verifier_identity()
     assert judge._verifier_identity()["max_tokens"] == 64
     assert ps.status == "SUCCEEDED"
+
+
+def test_labels_for_granularity() -> None:
+    assert V.labels_for_granularity(5) == ("A", "B", "C", "D", "E")
+    assert V.labels_for_granularity(20) == tuple("ABCDEFGHIJKLMNOPQRST")
+    assert V.labels_for_granularity(26) == tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    with pytest.raises(ValueError):
+        V.labels_for_granularity(0)
+    with pytest.raises(ValueError):
+        V.labels_for_granularity(27)
+
+
+def _top20(dominant: str, labels: tuple[str, ...]) -> list[dict[str, object]]:
+    items = []
+    for lab in labels:
+        items.append({"token": lab, "logprob": -0.05 if lab == dominant else -2.0})
+    return items
+
+
+def test_scores_from_logprobs_granularity_20() -> None:
+    labels = V.labels_for_granularity(20)
+    # dominant at position A = 'J' (10th), position B = 'S' (19th)
+    content: list[dict[str, object]] = [
+        {"token": "J", "top_logprobs": _top20("J", labels)},
+        {"token": "S", "top_logprobs": _top20("S", labels)},
+    ]
+    assert scores_from_logprobs(content, labels) == (10, 19)
+
+
+def test_judge_uses_granularity_labels(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    yaml = CONFIG_YAML.replace("granularity: 5", "granularity: 20")
+    (tmp_path / "tasks.txt").write_text("task_x\n", encoding="utf-8")
+    cfg = yaml.replace("__TASKFILE__", (tmp_path / "tasks.txt").as_posix()).replace(
+        "__ROOT__", (tmp_path / "avt3").as_posix()
+    )
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(cfg, encoding="utf-8")
+    judge = DiscreteJudge(load_config(cfg_path), tmp_path)
+    assert len(judge._labels) == 20
+
+    scratch = tmp_path / "scratch"
+    ca, cb = _seed_pair(judge, scratch)
+    pid = _single_pair(judge, scratch, ca, cb)
+    pair: dict[str, object] = {"pair_id": pid, "candidate_a": ca, "candidate_b": cb}
+    judge._body_for = lambda cid, task: f"BODY_{cid}"  # type: ignore[assignment]
+
+    def fake_post(url: str, payload: dict[str, object], timeout: int = 120) -> dict[str, object]:
+        labels = judge._labels
+        content = [
+            {"token": "K", "top_logprobs": _top20("K", labels)},
+            {"token": "P", "top_logprobs": _top20("P", labels)},
+        ]
+        return {"choices": [{"logprobs": {"content": content}}]}
+
+    monkeypatch.setattr(V, "_post_json", fake_post)
+    ps = judge._verify_pair(pair, "task_x", "output", 0)
+    assert ps.score_a == 11 and ps.score_b == 16  # K=11, P=16
+    assert judge._verifier_identity()["granularity"] == 20

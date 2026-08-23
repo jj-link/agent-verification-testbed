@@ -33,6 +33,7 @@ __all__ = [
     "MissingLabelError",
     "SCORE_LABELS",
     "build_messages",
+    "labels_for_granularity",
     "normalize_endpoint",
     "scores_from_logprobs",
 ]
@@ -41,6 +42,16 @@ __all__ = [
 # to a single token with a stable ordering. A < B < C < D < E maps to 1..5.
 SCORE_LABELS = tuple(G5_LABELS)
 _LABEL_VALUE = {label: i + 1 for i, label in enumerate(G5_LABELS)}
+
+
+def labels_for_granularity(granularity: int) -> tuple[str, ...]:
+    """The first ``granularity`` uppercase letters as single-token score labels."""
+    letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    if granularity < 1 or granularity > len(letters):
+        raise ValueError(f"granularity {granularity} out of range 1..{len(letters)}")
+    return tuple(letters[:granularity])
+
+
 _TOP_LOGPROBS = 100
 # Delimiter/whitespace characters allowed around a single letter token.
 _DELIMS = set("<>(),.:;") | {chr(32), chr(9), chr(10), chr(13), chr(39), chr(34)}
@@ -84,7 +95,11 @@ def normalize_endpoint(endpoint: str) -> str:
 
 
 def build_messages(
-    task_description: str, trajectory_a: str, trajectory_b: str, criterion: str
+    task_description: str,
+    trajectory_a: str,
+    trajectory_b: str,
+    criterion: str,
+    labels: tuple[str, ...] = SCORE_LABELS,
 ) -> list[dict[str, str]]:
     if criterion not in CRITERIA:
         raise ValueError(f"unknown criterion: {criterion!r}")
@@ -94,8 +109,8 @@ def build_messages(
         f"TRAJECTORY A:\n{trajectory_a}\n\n"
         f"TRAJECTORY B:\n{trajectory_b}\n\n"
         f"Output ONLY: <A> <B>, where <A> is a single letter from "
-        f"{{{','.join(G5_LABELS)}}} scoring trajectory A and <B> a single letter "
-        f"from {{{','.join(G5_LABELS)}}} scoring trajectory B. No other text."
+        f"{{{','.join(labels)}}} scoring trajectory A and <B> a single letter "
+        f"from {{{','.join(labels)}}} scoring trajectory B. No other text."
     )
     return [
         {"role": "system", "content": _DOMAIN_INSTRUCTION},
@@ -103,33 +118,35 @@ def build_messages(
     ]
 
 
-def _label_of(token: str) -> str | None:
+def _label_of(token: str, labels: tuple[str, ...]) -> str | None:
     """Return the single score letter a generated token denotes, or None.
 
     The frozen single-token labels frequently surface wrapped in delimiter or
     whitespace tokens (``" A"``, ``"E>"``, ``"<E>"``, ``"E,"``). A token maps
-    to a letter only if it contains exactly one A-E letter and no other
+    to a letter only if it contains exactly one label letter and no other
     non-delimiter content.
     """
-    letters = [ch for ch in token if ch in "ABCDE"]
+    letters = [ch for ch in token if ch in labels]
     if len(letters) != 1:
         return None
     for ch in token:
-        if ch not in "ABCDE" and ch not in _DELIMS:
+        if ch not in labels and ch not in _DELIMS:
             return None
     return letters[0]
 
 
-def _label_probs(top_logprobs: list[dict[str, object]]) -> dict[str, float]:
+def _label_probs(
+    top_logprobs: list[dict[str, object]], labels: tuple[str, ...]
+) -> dict[str, float]:
     weights: dict[str, float] = {}
     for item in top_logprobs:
         token = str(item.get("token"))
-        label = _label_of(token)
+        label = _label_of(token, labels)
         if label is not None:
             lp = item.get("logprob")
             if isinstance(lp, (int, float)):
                 weights[label] = weights.get(label, 0.0) + math.exp(float(lp))
-    missing = [lab for lab in SCORE_LABELS if lab not in weights]
+    missing = [lab for lab in labels if lab not in weights]
     if missing:
         # Plan 13.2: missing score-token probabilities are a configuration
         # failure; never silently assign probability zero.
@@ -141,17 +158,19 @@ def _label_probs(top_logprobs: list[dict[str, object]]) -> dict[str, float]:
     return {label: weight / total for label, weight in weights.items()}
 
 
-def _discrete(probs: dict[str, float]) -> int:
+def _discrete(probs: dict[str, float], labels: tuple[str, ...]) -> int:
+    label_value = {label: i + 1 for i, label in enumerate(labels)}
     best = max(probs.items(), key=lambda kv: kv[1])[0]
-    return _LABEL_VALUE[best]
+    return label_value[best]
 
 
-def _expected(probs: dict[str, float]) -> float:
-    return sum(_LABEL_VALUE[label] * prob for label, prob in probs.items())
+def _expected(probs: dict[str, float], labels: tuple[str, ...]) -> float:
+    label_value = {label: i + 1 for i, label in enumerate(labels)}
+    return sum(label_value[label] * prob for label, prob in probs.items())
 
 
 def _both_label_probs(
-    content_logprobs: list[dict[str, object]],
+    content_logprobs: list[dict[str, object]], labels: tuple[str, ...]
 ) -> tuple[dict[str, float], dict[str, float]]:
     """Return the A and B score-token label distributions.
 
@@ -161,30 +180,32 @@ def _both_label_probs(
     label_indices = [
         i
         for i, c in enumerate(content_logprobs)
-        if isinstance(c.get("token"), str) and _label_of(str(c["token"])) in SCORE_LABELS
+        if isinstance(c.get("token"), str) and _label_of(str(c["token"]), labels) in labels
     ]
     if len(label_indices) < 2:
         raise MalformedVerifier(f"expected >= 2 score-token positions, found {len(label_indices)}")
     top0 = content_logprobs[label_indices[0]].get("top_logprobs")
     top1 = content_logprobs[label_indices[1]].get("top_logprobs")
     return (
-        _label_probs(list(top0) if isinstance(top0, list) else []),
-        _label_probs(list(top1) if isinstance(top1, list) else []),
+        _label_probs(list(top0) if isinstance(top0, list) else [], labels),
+        _label_probs(list(top1) if isinstance(top1, list) else [], labels),
     )
 
 
-def scores_from_logprobs(content_logprobs: list[dict[str, object]]) -> tuple[int, int]:
+def scores_from_logprobs(
+    content_logprobs: list[dict[str, object]], labels: tuple[str, ...] = SCORE_LABELS
+) -> tuple[int, int]:
     """Discrete A/B scores: each trajectory's highest-probability label value."""
-    pa, pb = _both_label_probs(content_logprobs)
-    return _discrete(pa), _discrete(pb)
+    pa, pb = _both_label_probs(content_logprobs, labels)
+    return _discrete(pa, labels), _discrete(pb, labels)
 
 
 def expected_scores_from_logprobs(
-    content_logprobs: list[dict[str, object]],
+    content_logprobs: list[dict[str, object]], labels: tuple[str, ...] = SCORE_LABELS
 ) -> tuple[float, float]:
     """Continuous A/B expected scores: label-value weighted probability sums."""
-    pa, pb = _both_label_probs(content_logprobs)
-    return _expected(pa), _expected(pb)
+    pa, pb = _both_label_probs(content_logprobs, labels)
+    return _expected(pa, labels), _expected(pb, labels)
 
 
 def _post_json(url: str, payload: dict[str, object], timeout: int = 120) -> dict[str, Any]:
@@ -220,6 +241,7 @@ class DiscreteJudge:
         self.exp = experiment_id(config.raw)
         self.endpoint = normalize_endpoint(config.verifier.endpoint).rstrip("/")
         self._max_tokens = int(getattr(config.verifier, "max_tokens", 16) or 16)
+        self._labels = labels_for_granularity(int(config.verifier.granularity))
 
     def _body_for(self, candidate_id_: str, task_id: str) -> str:
         with self.catalog.connect() as scoped:
@@ -249,7 +271,7 @@ class DiscreteJudge:
             "criteria": list(self.config.verifier.criteria),
             "granularity": self.config.verifier.granularity,
             "repetitions": self.config.verifier.repetitions,
-            "labels": list(SCORE_LABELS),
+            "labels": list(self._labels),
             "max_tokens": self._max_tokens,
         }
 
@@ -355,7 +377,7 @@ class DiscreteJudge:
             task_description = scoped.get_task_instruction(self.exp, task_id) or ""
         body_a = self._body_for(disp_a, task_id)
         body_b = self._body_for(disp_b, task_id)
-        messages = build_messages(task_description, body_a, body_b, criterion)
+        messages = build_messages(task_description, body_a, body_b, criterion, self._labels)
         base_payload: dict[str, object] = {
             "model": self.config.verifier.model,
             "messages": messages,
@@ -383,7 +405,7 @@ class DiscreteJudge:
             lp = (choices[0].get("logprobs") or {}) if isinstance(choices[0], dict) else {}
             content_lp: list[dict[str, Any]] = list(lp.get("content") or [])
             try:
-                score_a, score_b = scores_from_logprobs(content_lp)
+                score_a, score_b = scores_from_logprobs(content_lp, self._labels)
                 last_error = None
                 break
             except MissingLabelError:
