@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -218,3 +219,82 @@ def test_expected_scores_weighted_sum() -> None:
     ra, rb = expected_scores_from_logprobs(ca + cb)
     assert abs(ra - 1.5) < 1e-6  # 0.5*1 + 0.5*2
     assert abs(rb - 3.0) < 1e-6  # 1.0*3
+
+def _single_pair(builder: DiscreteJudge, scratch: Path, ca: str, cb: str) -> str:
+    from avt.storage.ids import pair_id
+
+    pid = pair_id(builder.exp, "task_x", (ca, cb))
+    with builder.catalog.connect() as scoped:
+        scoped.record_pair(pid, builder.exp, "task_x", ca, cb, "PAIRED")
+    return pid
+
+
+def test_malformed_retries_once_with_reminder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A malformed draw is retried exactly once with the strict-format reminder."""
+    scratch = tmp_path / "scratch"
+    judge = _make(tmp_path)
+    ca, cb = _seed_pair(judge, scratch)
+    pid = _single_pair(judge, scratch, ca, cb)
+    pair: dict[str, object] = {"pair_id": pid, "candidate_a": ca, "candidate_b": cb}
+
+    calls: list[dict[str, object]] = []
+
+    def fake_post(
+        url: str, payload: dict[str, object], timeout: int = 120
+    ) -> dict[str, object]:
+        calls.append(payload)
+        if len(calls) == 1:
+            # malformed: only a single score-token position
+            return {
+                "choices": [
+                    {"logprobs": {"content": [{"token": "A", "top_logprobs": _top(True, "A")}]}}
+                ]
+            }
+        return _response("C", "B")
+
+    monkeypatch.setattr(V, "_post_json", fake_post)
+    judge._body_for = lambda cid, task: f"BODY_{cid}"  # type: ignore[assignment]
+
+    ps = judge._verify_pair(pair, "task_x", "specification", 0)
+    assert ps.score_a == 3 and ps.score_b == 2
+    assert len(calls) == 2  # exactly one malformed retry
+    messages = cast(list[dict[str, str]], calls[1]["messages"])
+    retry_user = messages[-1]["content"]
+    assert V._MALFORMED_REMINDER in retry_user
+    with judge.catalog.connect() as scoped:
+        row = scoped._conn.execute("SELECT malformed_attempts FROM verifications").fetchone()
+    assert row[0] == 1
+
+
+def test_missing_label_fails_immediately_no_persist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Missing score-token probabilities fail on the first call (plan 15)."""
+    scratch = tmp_path / "scratch"
+    judge = _make(tmp_path)
+    ca, cb = _seed_pair(judge, scratch)
+    pid = _single_pair(judge, scratch, ca, cb)
+    pair: dict[str, object] = {"pair_id": pid, "candidate_a": ca, "candidate_b": cb}
+
+    calls: list[dict[str, object]] = []
+
+    def fake_post(
+        url: str, payload: dict[str, object], timeout: int = 120
+    ) -> dict[str, object]:
+        calls.append(payload)
+        content = [
+            {"token": "B", "top_logprobs": _top(False, "B")},
+            {"token": "B", "top_logprobs": _top(False, "B")},
+        ]
+        return {"choices": [{"logprobs": {"content": content}}]}
+
+    monkeypatch.setattr(V, "_post_json", fake_post)
+    judge._body_for = lambda cid, task: f"BODY_{cid}"  # type: ignore[assignment]
+
+    with pytest.raises(MissingLabelError):
+        judge._verify_pair(pair, "task_x", "specification", 0)
+    assert len(calls) == 1  # never retried
+    with judge.catalog.connect() as scoped:
+        assert scoped._conn.execute("SELECT COUNT(*) FROM verifications").fetchone()[0] == 0

@@ -56,6 +56,13 @@ _DOMAIN_INSTRUCTION = (
     "the same software engineering task. Score each trajectory from 1 (poor) to "
     "5 (excellent) for the stated criterion. Higher is better."
 )
+# Plan 15: a malformed (unparsable) output is retried exactly once with this
+# strict format reminder appended to the user message.
+_MALFORMED_REMINDER = (
+    "\n\nYour previous response was not exactly two score letters. Output ONLY "
+    "two single letters from {A,B,C,D,E} separated by a space - the first scores "
+    "trajectory A, the second scores trajectory B. No other text, no explanation."
+)
 
 # host.docker.internal is a container-only alias; the judge runs host-side (AVT
 # orchestration on the workstation), so the model is reached on host loopback.
@@ -292,7 +299,7 @@ class DiscreteJudge:
         body_a = self._body_for(disp_a, task_id)
         body_b = self._body_for(disp_b, task_id)
         messages = build_messages(task_description, body_a, body_b, criterion)
-        payload: dict[str, object] = {
+        base_payload: dict[str, object] = {
             "model": self.config.verifier.model,
             "messages": messages,
             "max_tokens": 16,
@@ -300,27 +307,37 @@ class DiscreteJudge:
             "top_logprobs": _TOP_LOGPROBS,
             "chat_template_kwargs": {"enable_thinking": False},
         }
-        # The endpoint is stochastic: a single draw occasionally returns prose
-        # with no isolated score letter (malformed) or omits a label. Bounded
-        # retry mirrors the plan's "malformed verifier output -> retry" policy.
+        # Plan 15 retry policy: a malformed output is retried exactly once with a
+        # strict format reminder; missing score-token probabilities are a
+        # configuration failure and fail this job immediately (never retried).
+        reminder_messages = [
+            dict(m, content=m["content"] + _MALFORMED_REMINDER) if m["role"] == "user" else m
+            for m in messages
+        ]
         score_a = score_b = 0
-        last_issue: Exception | None = None
         malformed_count = 0
-        for _attempt in range(3):
+        last_error: Exception | None = None
+        raw: dict[str, Any] = {}
+        for attempt in range(2):  # initial draw plus one malformed retry
+            # Reminder applies only on the retry, keeping the frozen prompt clean.
+            payload = dict(base_payload, messages=reminder_messages if attempt else messages)
             raw = _post_json(f"{self.endpoint}/chat/completions", payload)
             choices = raw.get("choices") or [{}]
             lp = (choices[0].get("logprobs") or {}) if isinstance(choices[0], dict) else {}
             content_lp: list[dict[str, Any]] = list(lp.get("content") or [])
             try:
                 score_a, score_b = scores_from_logprobs(content_lp)
-            except (MalformedVerifier, MissingLabelError) as exc:
-                last_issue = exc
+                last_error = None
+                break
+            except MissingLabelError:
+                # Configuration failure: never retry, fail this job visibly.
+                raise
+            except MalformedVerifier as exc:
                 malformed_count += 1
+                last_error = exc
                 continue
-            last_issue = None
-            break
-        if last_issue is not None:
-            raise last_issue
+        if last_error is not None:
+            raise last_error
         return self._persist(
             str(pair["pair_id"]),
             task_id,
@@ -332,7 +349,7 @@ class DiscreteJudge:
             raw,
             score_a,
             score_b,
-        malformed_count,
+            malformed_count,
         )
 
     def verify_all(self) -> list[PairScore]:
