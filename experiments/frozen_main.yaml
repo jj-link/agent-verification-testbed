@@ -8,7 +8,8 @@ experiment:
   seed: 42
   task_file: experiments/main_tasks.txt        # 25 tasks (smoke+pilot subset)
   candidates_per_task: 5
-  max_parallel: 4
+  # Plan §7 starts with one GPU-bound workload; the bounded WSL smoke validated it.
+  max_parallel: 1
 
 upstream:
   # Frozen upstream commits.
