@@ -1186,5 +1186,7 @@ Stage 18 remains deliberately not implemented (permitted blocker below).
 - Milestone commit: `b581d85`.
 - Gate: ruff check/format clean (incl. `analysis/`), mypy clean, **91 tests
   passed**, figures visually verified via browser render.
-- All plan stages 1-17 and 19 complete; Stage 18 blocked by design (paid-API
-  auth + spend cap not configured).
+- Completed: Stages 1-14, 16, 17, 19. Blocked/deferred: Stage 15 (G=20
+  requires a plan-compliant forced-token scorer, §13.2 — main re-frozen at G=5)
+  and Stage 18 (paid-API auth + spend cap not configured). G=20 remains a
+  documented ablation (plan §26.10); G=5 is the plan-compliant main granularity.
