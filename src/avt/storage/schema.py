@@ -20,7 +20,7 @@ __all__ = [
     "create_ground_truth_schema",
 ]
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 EXPERIMENT_STAGES: tuple[str, ...] = (
     "CREATED",
@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS verifications (
     repetition      INTEGER NOT NULL,
     display_order   TEXT NOT NULL,
     status          TEXT NOT NULL,
+    malformed_attempts INTEGER NOT NULL DEFAULT 0,
     request_path    TEXT,
     response_path   TEXT,
     scores_path     TEXT,
@@ -182,6 +183,17 @@ def _exec_script(conn: sqlite3.Connection, script: str) -> None:
     conn.commit()
 
 
+def _migrate_experiment(conn: sqlite3.Connection) -> None:
+    """Add ``verifications.malformed_attempts`` for pre-v2 databases."""
+    cols = conn.execute("PRAGMA table_info(verifications)").fetchall()
+    if not any(str(r[1]) == "malformed_attempts" for r in cols):
+        conn.execute(
+            "ALTER TABLE verifications ADD COLUMN malformed_attempts "
+            "INTEGER NOT NULL DEFAULT 0"
+        )
+        conn.commit()
+
+
 def _bump_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
     conn.execute(
         "INSERT INTO meta(key, value) VALUES(?, ?) "
@@ -193,6 +205,7 @@ def _bump_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
 
 def create_experiment_schema(conn: sqlite3.Connection) -> None:
     _exec_script(conn, _EXPERIMENT_DDL)
+    _migrate_experiment(conn)
     _bump_meta(conn, "schema_version", str(SCHEMA_VERSION))
 
 

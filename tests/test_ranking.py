@@ -53,7 +53,28 @@ def _make(tmp_path: Path) -> RoundRobinRanker:
     return RoundRobinRanker(load_config(cfg_path), tmp_path)
 
 
-def _seed(ranker: RoundRobinRanker, n: int, raw_scores: list[float]) -> list[str]:
+def _pair_id(a: str, b: str) -> str:
+    lo, hi = (a, b) if a < b else (b, a)
+    return f"pair-{lo[:8]}-{hi[:8]}"
+
+
+def _seed(
+    ranker: RoundRobinRanker,
+    n: int,
+    raw_scores: list[float],
+    *,
+    malformed: dict[str, int] | None = None,
+    drop_verification: bool = False,
+    wrong_criterion: bool = False,
+    duplicate_verification: bool = False,
+) -> list[str]:
+    """Seed a full task pool: candidates, evaluations, pairs, verifications.
+
+    Mirrors the Stage 8-10 pipeline: one SUCCEEDED pair per unordered
+    combination and one SUCCEEDED verification per pair (specification, rep 0),
+    with per-pair malformed counts shared by both members.
+    """
+    malformed = malformed or {}
     cids = [candidate_id(ranker.exp, "task_x", i) for i in range(n)]
     with ranker.catalog.connect() as sc:
         sc.upsert_experiment_config(ranker.exp, {}, "VERIFIED")
@@ -62,6 +83,39 @@ def _seed(ranker: RoundRobinRanker, n: int, raw_scores: list[float]) -> list[str
             sc.record_candidate(cid, ranker.exp, "task_x", i, "SUCCEEDED", None, None)
             raw = raw_scores[i]
             sc.record_evaluation(cid, raw, (raw - 1) / 4, "specification", 2)
+        for a in range(n):
+            for b in range(a + 1, n):
+                pid = _pair_id(cids[a], cids[b])
+                sc.record_pair(pid, ranker.exp, "task_x", cids[a], cids[b], "SUCCEEDED")
+                if drop_verification:
+                    continue
+                m = malformed.get(cids[a], 0) + malformed.get(cids[b], 0)
+                criterion = "output" if wrong_criterion else "specification"
+                sc.record_verification(
+                    f"ver-{pid}",
+                    pid,
+                    criterion,
+                    0,
+                    f"{cids[a]}+{cids[b]}",
+                    "SUCCEEDED",
+                    None,
+                    None,
+                    None,
+                    m,
+                )
+                if duplicate_verification:
+                    sc.record_verification(
+                        f"ver-{pid}-dup",
+                        pid,
+                        "specification",
+                        0,
+                        f"{cids[a]}+{cids[b]}",
+                        "SUCCEEDED",
+                        None,
+                        None,
+                        None,
+                        m,
+                    )
     return cids
 
 
@@ -94,12 +148,57 @@ def test_rank_all_no_grader_consulted(tmp_path: Path) -> None:
 
 
 def test_tie_breaks_by_lower_candidate_id(tmp_path: Path) -> None:
-    """Identical scores -> identical utilities -> lower id ranks better (plan 14)."""
+    """Identical scores/utilities and equal malformed -> lower id ranks better."""
     ranker = _make(tmp_path)
     cids = _seed(ranker, 3, [4.0, 4.0, 4.0])
 
     rec = ranker._rank_task("task_x")
     assert [r.candidate_id for r in rec.ranking] == sorted(cids)
+
+
+def test_tie_breaks_by_fewer_malformed(tmp_path: Path) -> None:
+    """Identical scores/utilities -> the candidate in cleaner pairs ranks better.
+
+    Per-candidate malformed A=2, B=2, C=0 give C a lower total malformed count
+    than A and B, so C outranks them even though its id is not lowest (plan 14
+    tie-break 2 beats tie-break 3).
+    """
+    ranker = _make(tmp_path)
+    cids = [candidate_id(ranker.exp, "task_x", i) for i in range(3)]
+    _seed(
+        ranker,
+        3,
+        [4.0, 4.0, 4.0],
+        malformed={cids[0]: 2, cids[1]: 2, cids[2]: 0},
+    )
+
+    rec = ranker._rank_task("task_x")
+    assert rec.ranking[0].candidate_id == cids[2]  # fewest malformed wins
+
+
+def test_ranking_fails_without_full_pair_coverage(tmp_path: Path) -> None:
+    """A missing verification fails the ranking visibly (plan 14 coverage)."""
+    ranker = _make(tmp_path)
+    _seed(ranker, 3, [4.0, 4.0, 4.0], drop_verification=True)
+
+    with pytest.raises(ValueError):
+        ranker._rank_task("task_x")
+def test_ranking_fails_on_wrong_criterion(tmp_path: Path) -> None:
+    """A wrong criterion slot is not masked by a matching total count."""
+    ranker = _make(tmp_path)
+    _seed(ranker, 2, [3.0, 4.0], wrong_criterion=True)
+
+    with pytest.raises(ValueError):
+        ranker._rank_task("task_x")
+
+
+def test_ranking_fails_on_duplicate_verification(tmp_path: Path) -> None:
+    """Duplicate rows do not satisfy the exact (criterion, repetition) set."""
+    ranker = _make(tmp_path)
+    _seed(ranker, 2, [3.0, 4.0], duplicate_verification=True)
+
+    with pytest.raises(ValueError):
+        ranker._rank_task("task_x")
 
 
 def test_ranking_conflicting_rerun_raises(tmp_path: Path) -> None:

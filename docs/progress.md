@@ -561,21 +561,30 @@ task without consulting the ground-truth store.
 
 - `src/avt/ranking.py`: `RoundRobinRanker` computes per-candidate utility
   `u_i = mean_{j != i} sigmoid(R_i - R_j)` (R = aggregate expected score) and
-  ranks each task pool stably. Tie-breaking per plan 14: higher mean expected
-  score, then lexicographically lower deterministic candidate id; the numeric
-  "higher is better" columns are negated so an ascending stable sort still
-  puts the lower id first.
-  - Tie-break 2 ("fewer malformed verifier records") is not applied: no
-    malformed counter is persisted. Under the plan's 100% usable-pair-coverage
-    guarantee, malformed verifier output is retried to a valid parse or fails
-    the job, so surviving candidates have no captured malformed records
-    (verified against the schema). Adding a persistent counter would be
-    speculative infrastructure the plan does not require.
+  ranks each task pool stably. Tie-breaking per plan 14, all three applied in
+  order: higher mean expected score, fewer malformed verifier records,
+  lexicographically lower deterministic candidate id; the numeric "higher is
+  better" columns are negated so an ascending stable sort still puts fewer
+  malformed records and the lower id first.
+  - Malformed verifier records are counted per verification as
+    `malformed_attempts` (retries that returned an unparsable score-token
+    response before the eventual success) and aggregated per candidate over its
+    pairs; candidate totals differ since each candidate sits in a different
+    subset of pairs.
+  - `_check_pair_coverage` enforces plan 14's 100% usable pair coverage before
+    ranking: every unordered pool pair must be present and carry a SUCCEEDED
+    verification for every (criterion, repetition); a gap fails the ranking job
+    visibly (a pair's own `status` is its freeze state, e.g. PAIRED, and is not
+    the usable signal).
   - `_validate_no_grader` guards that ranking opens only `experiment.sqlite`;
     `ground_truth.sqlite` is a separate file never opened here.
 - Schema: `rankings(ranking_id, task_id, pool_hash, selector_config, result,
   status)` (immutable); catalog `record_ranking` rejects a conflicting rewrite,
-  identical rewrites are a no-op.
+  identical rewrites are a no-op. `verifications` gained
+  `malformed_attempts INTEGER NOT NULL DEFAULT 0` (schema v2; ALTER migration
+  back-fills existing DBs), and the discrete verifier records malformed retries
+  per request; catalog exposes `malformed_attempts_for` and
+  `count_succeeded_verifications` for the ranker.
 - CLI: `avt rank --config …` ranks every task and prints each task's top
   candidate and utility.
 - `ranking_id = hash(task_id, pool_hash, selector_config)` (plan 7), making the
@@ -583,24 +592,35 @@ task without consulting the ground-truth store.
 
 ### Checks
 
-- `uv run pytest tests/test_ranking.py -q` — 6 passed (new: sigmoid, highest
+- `uv run pytest tests/test_ranking.py -q` — 10 passed (new: sigmoid, highest
   aggregate ranks first, rank_all consults no grader, lower-id tie-break,
-  conflicting rerun raises, missing-aggregate fails visibly).
-- Full suite `uv run pytest -q` — 64 passed (includes the generation test;
+  fewer-malformed tie-break, missing-verification failure, wrong-criterion
+  failure, duplicate-verification failure, conflicting-rerun failure,
+  missing-aggregate failure).
+- Full suite `uv run pytest -q` — 68 passed (includes the generation test;
   `harbor` resolves from the venv `tbench` extra).
 - `uv run ruff check .` — clean; `uv run ruff format --check .` — clean.
 - `uv run mypy .` — no issues (28 source files).
-- Verified on `smoke-rtx-v3` (frozen, 2 tasks × 3 candidates): `avt rank`
-  ranked both tasks; manual recomputation of the round-robin utilities matches
-  the stored results; the top candidate is the one with the highest aggregate
-  expected score. Re-running is idempotent (2 ranking rows unchanged), and the
-  experiment DB contains no `official_results` table (ground-truth isolation).
+- Verified on `smoke-rtx-v3` (frozen, 2 tasks × 3 candidates): the pre-v2 DB was
+  migrated (ALTER added `malformed_attempts`, default 0); `avt rank` passed the
+  pair-coverage check — every pair carries exactly the configured
+  (criterion, repetition) SUCCEEDED key set {(errors,0),(output,0),
+  (specification,0)} — and ranked both tasks; manual recomputation of the
+  round-robin utilities matches the stored results; the top candidate is the
+  one with the highest aggregate expected score. Re-running is idempotent (2
+  ranking rows unchanged), and the experiment DB contains no `official_results`
+  table (ground-truth isolation).
 
 ### Decisions
 
-- Kept the tie-break to score then id; malformed-record tie-break omitted as
-  vacuous under 100% coverage (see Work). This is a reasoned deviation, not a
-  silent method change — ranking still fails visibly on unusable pairs.
+- All three plan-14 tie-breakers implemented in order (higher mean expected
+  score, fewer malformed verifier records, lower deterministic id). The
+  malformed tie-break is meaningful even under 100% coverage: a candidate's
+  total is the sum over the distinct subset of pairs it participates in.
+- `_check_pair_coverage` enforces 100% usable pair coverage at ranking time and
+  fails the job visibly on any gap, per plan 14. A pair's own `status` (PAIRED
+  etc.) is its freeze state, not the usable signal; usability is the complete
+  SUCCEEDED verification set.
 - Ranking never consults the official grader, per plan 14 "Never use the
   official grader for tie-breaking" and the ground-truth isolation guarantee.
 
@@ -608,6 +628,10 @@ task without consulting the ground-truth store.
 
 - Stage 12: `src/avt/ranking.py`, `src/avt/storage/catalog.py`,
   `src/avt/cli.py`, `tests/test_ranking.py`.
+- Stage 12 (completed §14): `schema.py` (schema v2 `malformed_attempts` +
+  migration), `verification.py` (malformed counting), `catalog.py`,
+  `ranking.py` (malformed tie-break + pair-coverage check),
+  `tests/test_ranking.py` (expanded).
 
 ### Next action
 

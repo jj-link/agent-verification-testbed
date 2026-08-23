@@ -244,6 +244,7 @@ class DiscreteJudge:
         response: object,
         score_a: int,
         score_b: int,
+        malformed_attempts: int = 0,
     ) -> PairScore:
         verifier_cfg = {
             "model": self.config.verifier.model,
@@ -272,6 +273,7 @@ class DiscreteJudge:
                 str(artifact_paths["request"]),
                 str(artifact_paths["response"]),
                 str(artifact_paths["scores"]),
+                malformed_attempts,
             )
         return PairScore(vid, pair_id_, criterion, repetition, (disp_a, disp_b), score_a, score_b)
 
@@ -303,6 +305,7 @@ class DiscreteJudge:
         # retry mirrors the plan's "malformed verifier output -> retry" policy.
         score_a = score_b = 0
         last_issue: Exception | None = None
+        malformed_count = 0
         for _attempt in range(3):
             raw = _post_json(f"{self.endpoint}/chat/completions", payload)
             choices = raw.get("choices") or [{}]
@@ -312,6 +315,7 @@ class DiscreteJudge:
                 score_a, score_b = scores_from_logprobs(content_lp)
             except (MalformedVerifier, MissingLabelError) as exc:
                 last_issue = exc
+                malformed_count += 1
                 continue
             last_issue = None
             break
@@ -328,6 +332,7 @@ class DiscreteJudge:
             raw,
             score_a,
             score_b,
+        malformed_count,
         )
 
     def verify_all(self) -> list[PairScore]:

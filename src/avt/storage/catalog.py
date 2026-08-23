@@ -267,13 +267,16 @@ class CatalogConnection:
         request_path: str | None,
         response_path: str | None,
         scores_path: str | None,
+        malformed_attempts: int = 0,
     ) -> None:
         """Upsert a verification record. Idempotent: identical rewrites are a
-        no-op; any conflict raises so a frozen verification row is immutable."""
+        no-op; any conflict raises so a frozen verification row is immutable.
+        ``malformed_attempts`` counts retries that returned an unparsable
+        score-token response before the eventual success (plan 14 tie-break)."""
         row = self._conn.execute(
             "SELECT pair_id, criterion, repetition, display_order, status, "
-            "request_path, response_path, scores_path FROM verifications "
-            "WHERE verification_id=?",
+            "request_path, response_path, scores_path, malformed_attempts "
+            "FROM verifications WHERE verification_id=?",
             (verification_id_,),
         ).fetchone()
         if row is not None:
@@ -286,6 +289,7 @@ class CatalogConnection:
                 row[5],
                 row[6],
                 row[7],
+                row[8],
             )
             incoming = (
                 pair_id,
@@ -296,6 +300,7 @@ class CatalogConnection:
                 request_path,
                 response_path,
                 scores_path,
+                malformed_attempts,
             )
             if current != incoming:
                 raise ValueError(
@@ -306,7 +311,7 @@ class CatalogConnection:
         self._conn.execute(
             "INSERT INTO verifications(verification_id, pair_id, criterion, "
             "repetition, display_order, status, request_path, response_path, "
-            "scores_path, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "scores_path, malformed_attempts, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (
                 verification_id_,
                 pair_id,
@@ -317,6 +322,7 @@ class CatalogConnection:
                 request_path,
                 response_path,
                 scores_path,
+                malformed_attempts,
                 _now(),
             ),
         )
@@ -432,7 +438,8 @@ class CatalogConnection:
     def list_verifications(self) -> list[dict[str, object]]:
         rows = self._conn.execute(
             "SELECT verification_id, pair_id, criterion, repetition, display_order, "
-            "status, request_path, response_path, scores_path FROM verifications "
+            "status, request_path, response_path, scores_path, "
+            "malformed_attempts FROM verifications "
             "ORDER BY pair_id, criterion"
         ).fetchall()
         return [dict(r) for r in rows]
@@ -445,10 +452,36 @@ class CatalogConnection:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def malformed_attempts_for(self, candidate_id_: str) -> int:
+        """Total malformed score-token retries across a candidate's verifications."""
+        rows = self._conn.execute(
+            "SELECT v.malformed_attempts FROM verifications v "
+            "JOIN pairs p ON p.pair_id = v.pair_id "
+            "WHERE p.candidate_a = ? OR p.candidate_b = ?",
+            (candidate_id_, candidate_id_),
+        ).fetchall()
+        return sum(int(r[0]) for r in rows)
+
+    def count_succeeded_verifications(self, pair_id: str) -> int:
+        """Number of SUCCEEDED verifications for a pair (ranking coverage check)."""
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM verifications WHERE pair_id=? AND status='SUCCEEDED'",
+            (pair_id,),
+        ).fetchone()
+        return int(row[0])
+
+    def succeeded_verification_keys(self, pair_id: str) -> set[tuple[str, int]]:
+        """SUCCEEDED (criterion, repetition) keys for a pair, for exact coverage."""
+        rows = self._conn.execute(
+            "SELECT criterion, repetition FROM verifications "
+            "WHERE pair_id=? AND status='SUCCEEDED'",
+            (pair_id,),
+        ).fetchall()
+        return {(str(r[0]), int(r[1])) for r in rows}
+
 
 class Catalog:
     """Owns the experiment catalog database file and opens connections."""
-
     def __init__(self, path: Path) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)

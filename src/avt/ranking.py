@@ -66,6 +66,40 @@ class RoundRobinRanker:
             raise ValueError(f"{candidate_id_}: no aggregate expected score")
         return float(value)
 
+    def _check_pair_coverage(self, task_id: str, ids: list[str]) -> None:
+        """Enforce 100% usable pair coverage (plan 14) before ranking.
+
+        Every unordered pair in the pool must be present and carry a SUCCEEDED
+        verification for every (criterion, repetition). A pair's own ``status``
+        is its freeze state (e.g. PAIRED), not the usable signal. Missing
+        coverage fails the ranking job visibly rather than silently changing
+        the method.
+        """
+        criteria = tuple(self.config.verifier.criteria)
+        repetitions = int(self.config.verifier.repetitions)
+        expected_keys = {(c, r) for c in criteria for r in range(repetitions)}
+        required = {(a, b) for a in ids for b in ids if a < b}
+        with self.catalog.connect() as scoped:
+            pairs = scoped.list_pairs(self.exp, task_id)
+            present: dict[tuple[str, str], dict[str, object]] = {}
+            for pa in pairs:
+                ca, cb = str(pa["candidate_a"]), str(pa["candidate_b"])
+                ordered = (ca, cb) if ca < cb else (cb, ca)
+                present[ordered] = pa
+                if ordered not in required:
+                    raise ValueError(f"{task_id}: pair {pa['pair_id']} outside pool")
+                keys = scoped.succeeded_verification_keys(str(pa["pair_id"]))
+                n = scoped.count_succeeded_verifications(str(pa["pair_id"]))
+                if keys != expected_keys or n != len(expected_keys):
+                    raise ValueError(
+                        f"{task_id}: pair {pa['pair_id']} SUCCEEDED "
+                        f"(criterion,repetition) coverage {sorted(keys)} ({n} rows), "
+                        f"expected {sorted(expected_keys)}"
+                    )
+        missing = required - set(present)
+        if missing:
+            raise ValueError(f"{task_id}: missing pairs {sorted(missing)}")
+
     def _rank_task(self, task_id: str) -> RankingRecord:
         with self.catalog.connect() as scoped:
             cands = scoped.list_candidates(self.exp, task_id)
@@ -73,17 +107,20 @@ class RoundRobinRanker:
         if len(ids) < 2:
             raise ValueError(f"{task_id}: pool too small to rank ({len(ids)})")
         scores = {cid: self._aggregate(cid) for cid in ids}
-
+        self._check_pair_coverage(task_id, ids)
+        with self.catalog.connect() as scoped:
+            malformed = {cid: scoped.malformed_attempts_for(cid) for cid in ids}
         utilities: dict[str, float] = {}
         for i in ids:
             others = [j for j in ids if j != i]
             utilities[i] = sum(_sigmoid(scores[i] - scores[j]) for j in others) / len(others)
 
         # Stable ascending sort; negation inverts the numeric "higher is better"
-        # columns so a lower deterministic candidate id still ranks better (plan 14).
-        def key(cid: str) -> tuple[float, float, str]:
-            # higher utility, higher expected score, lower id -> rank better
-            return (-utilities[cid], -scores[cid], cid)
+        # columns so fewer malformed verifier records and a lower deterministic id
+        # still rank better (plan 14 tie-breaking).
+        def key(cid: str) -> tuple[float, float, int, str]:
+            # higher utility, higher expected score, fewer malformed, lower id
+            return (-utilities[cid], -scores[cid], malformed[cid], cid)
 
         ranked = sorted(ids, key=key)
         pool_hash = stable_hash(sorted(ids))
