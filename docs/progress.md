@@ -822,3 +822,36 @@ reproducibility prerequisite committed.
 2. Select a Stage-15 configuration (5 candidates/task, G=20 labels) and freeze pools.
 3. Run generation (5 candidates x 8 tasks) and G=20 verification; then measure score
    coverage and context reliability.
+
+## Stage 15 — Pilot to five candidates and G=20 (in progress; generation running)
+
+**Status:** in progress — verifier robustness fixes committed; Stage-15 G=20 pilot
+config created; 40-candidate generation running.
+
+### Verifier robustness fixes (committed)
+
+Diagnosis: the Stage-14 FAILED verification response was exactly `content = "A F"`
+(tokens `A`, ` F`, EOS, `finish_reason="stop"`): the model emitted the second score
+as `F`, **outside** the G=5 label set {A..E}; not a token-cap or endpoint fault.
+
+Fixes (each frozen/reproducible, tests added):
+- `max_tokens` is config-driven and in the verifier identity (`1f04965`).
+- Score labels derive from `config.verifier.granularity`
+  (`labels_for_granularity`, `36f24a2`): G=20 = A..T, frozen in the identity. This
+  is the G=20 prerequisite.
+- `_HarborRunner.run` now returns a present graded job dir even on nonzero Harbor
+  rc instead of raising `InfrastructureFailure`, so `generate_one` accepts the
+  official grade and does not burn a fresh retry round (Stage 14 wasted ~10 rounds /
+  ~100M tokens this way). `9c87efe`.
+
+### Stage 15 config
+
+- `experiments/pilot-g20.yaml`: the same 8 pilot tasks, `candidates_per_task: 5`,
+  `verifier.granularity: 20` (labels A..T), storage `.avt/pilot-g20/` (new experiment
+  id; the frozen Stage-14 `pilot` pool is untouched). Committed `d843aac`.
+
+### In progress
+
+- 5-candidate generation (8 tasks x 5 = 40 candidates) running in the background.
+- Next: build pairs -> G=20 discrete verification -> measure score coverage and
+  context reliability.
