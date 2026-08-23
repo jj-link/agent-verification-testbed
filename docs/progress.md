@@ -784,3 +784,41 @@ verifier prompt (body budget up to 60k tokens/side; ~5.5M prompt tokens for 72 c
 - Regression tests: resume makes only missing calls (SUCCEEDED and FAILED skipped);
   persistent-malformed records FAILED with response artifact; a resumed run does not
   claim VERIFIED when a FAILED row predates it.
+
+## Stage 15 — Pilot to five candidates and G=20 (in progress)
+
+**Status:** in progress — verifier-robustness diagnosis complete; verifier
+reproducibility prerequisite committed.
+
+### Diagnosis (malformed-draw root cause)
+
+- The Stage-14 FAILED verification's persisted response is exactly `content = "A F"`,
+  tokens `A`, ` F`, EOS, `finish_reason="stop"`. It did **not** emit prose and did
+  **not** hit the token cap.
+- Root cause: the model generated `F` as the second score token, which is **outside**
+  the G=5 label set {A,B,C,D,E}; the judge (correctly) rejects it, so only one valid
+  score position exists. The ~20% draw-level malformed rate largely reflects
+  occasional out-of-scale letters (and stray prose), not a cap or endpoint fault.
+- The Stage-15 fix direction is invalid-label generation: strengthen the verifier
+  format instruction / constrain output to the label set (e.g. stricter prompt or
+  guided/constrained decoding), NOT parser relaxation (which would silently hide
+  compliance issues the plan measures).
+
+### Reproducibility change
+
+- The discrete judge's `max_tokens` was hardcoded (`16`); it is now config-driven
+  (`verifier.max_tokens`, default `16`) and included in the verifier identity so any
+  tuning change is a distinct, frozen, reproducible run. (`config.py`,
+  `verification.py._verifier_identity`, new test.)
+
+### Checks
+
+- `uv run pytest -q` — 77 passed; ruff/format/mypy clean.
+
+### Next action
+
+1. Make the verifier prompt / label-set / output policy fully config-driven and into
+   the identity (reproducibility; prerequisite to G=20 and the invalid-label fix).
+2. Select a Stage-15 configuration (5 candidates/task, G=20 labels) and freeze pools.
+3. Run generation (5 candidates x 8 tasks) and G=20 verification; then measure score
+   coverage and context reliability.
