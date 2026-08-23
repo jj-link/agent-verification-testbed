@@ -855,3 +855,66 @@ Fixes (each frozen/reproducible, tests added):
 - 5-candidate generation (8 tasks x 5 = 40 candidates) running in the background.
 - Next: build pairs -> G=20 discrete verification -> measure score coverage and
   context reliability.
+
+## Stage 15 — Pilot to five candidates and G=20 (results)
+
+**Status:** score coverage and context measured; 5-candidate G=20 pools frozen and
+verified.
+
+### Run
+
+- `experiments/pilot-g20.yaml`: the same 8 pilot tasks, 5 candidates/task,
+  `granularity: 20` (labels A..T), storage `.avt/pilot-g20/` (new experiment id;
+  frozen Stage-14 pool untouched).
+- Generation: **40/40 candidates SUCCEEDED** (8 tasks x 5), zero failures — the
+  graded-on-nonzero-rc runner fix (`9c87efe`) avoided the wasted rounds seen in
+  Stage 14.
+- Pairs: 80 (10/task). G=20 discrete verification: **240 keys** (80 pairs x 3
+  criteria).
+
+### Score coverage (G=20)
+
+| Metric | Value | Provenance |
+|---|---|---|
+| Verification keys | 240 | 80 pairs x 3 criteria |
+| SUCCEEDED / FAILED | 238 / 2 | recorded rows |
+| Usable coverage | 238/240 = 99.2% | 6/8 tasks fully covered (30/30) |
+| Terminal verification failure | 2/240 = 0.8% | distribution-search/errors, rstan-to-pystan/specification |
+| Malformed draws | 53 | malformed_attempts sum |
+| Malformed-draw rate | 53/293 ≈ 18.1% | draws / (240 keys + 53 retries) |
+
+G=20 label coverage required two fixes:
+- `top_logprobs` 100 -> 300 (plan line 353 first remedy); config-driven + in the
+  verifier identity (`50dff29`).
+- Labels absent from a position's returned top-logprobs have ~0 probability for
+  G>5 (the model concentrates on a subset, e.g. `Q` at ~-200 logprob): treated as
+  0 and renormalized; `MissingLabelError` now only fires on a position with no
+  score label at all (genuine data absence) (`ded55b1`).
+
+### Context reliability
+
+- Max verifier `prompt_tokens` = **231,175**, ~1.9x the nominal
+  `max_pair_context_tokens: 120000` budget and ~88% of the model's 262K hard limit.
+- Root cause: `estimate_tokens`' chars/4 proxy undercounts real token count for
+  dense trajectories, so the rendered body can tokenize larger than budgeted.
+- No context overflow occurred (all 240 keys completed); noted as a cost/budget
+  finding for the renderer.
+
+### Decisions
+
+- Kept the 2 FAILED verifications as measured reliability findings (verifier
+  robustness to out-of-scale/prose draws; not silently hidden or reset).
+- As in Stage 14, the offline chain (expected-scores -> evaluate -> rank) is gated
+  on resolving the coverage gaps (plan 14: fail the affected ranking jobs visibly)
+  before the main study.
+
+### Checks
+
+- `uv run pytest -q` — 83 passed; `ruff check`; `ruff format --check`; `mypy` —
+  clean.
+
+### Milestone commits
+
+- `50dff29` top_logprobs config (G=20 coverage); `ded55b1` missing-subset-label
+  relaxation; earlier `36f24a2` granularity labels, `9c87efe` runner rc fix,
+  `50dff29`/`ded55b1` above. (Docs commit follows.)
