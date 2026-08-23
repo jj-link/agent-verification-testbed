@@ -46,7 +46,7 @@ storage:
 def _write_trial(job_dir: Path, reward: float | None, exc: str | None = None) -> None:
     trial_dir = job_dir / "task_x__XXXX"
     trial_dir.mkdir(parents=True, exist_ok=True)
-    verifier = {"rewards": {"reward": reward}} if not exc else {}
+    verifier = {"rewards": {"reward": reward}} if reward is not None else {}
     data = {
         "verifier_result": verifier,
         "exception_info": (
@@ -108,8 +108,8 @@ def test_exhausted_retries_mark_permanent(tmp_path: Path) -> None:
 
 def test_resume_reuses_pre_existing_round(tmp_path: Path) -> None:
     service, root = _make_service(tmp_path)
-    round0 = root / "avt/generation/task_x/0/0/gen-task_x-0-0"
-    _write_trial(round0, reward=0.0)
+    round0 = root / "avt/generation" / service.experiment_id() / "task_x/0/0/gen-task_x-0-0"
+    _write_trial(round0, reward=0.0, exc="LoopDetectionError")
     calls: list[int] = [0]
 
     def fake_run(config: object, task_id: str, attempt: int, out_dir: Path, job_name: str) -> Path:
@@ -124,8 +124,37 @@ def test_resume_reuses_pre_existing_round(tmp_path: Path) -> None:
         assert scoped.count_jobs("candidate", "SUCCEEDED") == 1
 
 
-def test_agent_timeout_trial_is_rejected_and_retried(tmp_path: Path) -> None:
-    """A timed-out trial must NOT be indexed as a successful candidate."""
+def test_generation_outputs_are_isolated_by_experiment(tmp_path: Path) -> None:
+    service_a, _ = _make_service(tmp_path)
+
+    def run_a(config: object, task_id: str, attempt: int, out_dir: Path, job_name: str) -> Path:
+        _write_trial(out_dir / job_name, reward=1.0)
+        return out_dir / job_name
+
+    service_a.runner.run = run_a  # type: ignore[method-assign]
+    assert service_a.generate_one("task_x", 0).reward == 1.0
+
+    config_path = tmp_path / "smoke.yaml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace("name: s", "name: s2"),
+        encoding="utf-8",
+    )
+    service_b = GenerationService(load_config(config_path), tmp_path)
+    calls = 0
+
+    def run_b(config: object, task_id: str, attempt: int, out_dir: Path, job_name: str) -> Path:
+        nonlocal calls
+        calls += 1
+        _write_trial(out_dir / job_name, reward=0.0)
+        return out_dir / job_name
+
+    service_b.runner.run = run_b  # type: ignore[method-assign]
+    assert service_b.generate_one("task_x", 0).reward == 0.0
+    assert calls == 1
+
+
+def test_ungraded_agent_exception_is_retried(tmp_path: Path) -> None:
+    """An agent exception without an official grade is not a usable candidate."""
     service, _ = _make_service(tmp_path)
     rounds: list[int] = []
 
@@ -133,7 +162,7 @@ def test_agent_timeout_trial_is_rejected_and_retried(tmp_path: Path) -> None:
         round_no = len(rounds)
         rounds.append(round_no)
         if round_no == 0:
-            _write_trial(out_dir / job_name, reward=1.0, exc="AgentTimeoutError")
+            _write_trial(out_dir / job_name, reward=None, exc="AgentTimeoutError")
         else:
             _write_trial(out_dir / job_name, reward=1.0)
         return out_dir / job_name

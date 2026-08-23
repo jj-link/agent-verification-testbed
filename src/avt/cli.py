@@ -107,8 +107,17 @@ def main(argv: list[str] | None = None) -> int:
         cfg = load_config(args.config)
         judge = DiscreteJudge(cfg, Path.cwd())
         scores = judge.verify_all()
-        print(f"verified {len(scores)} pair-scores")
-        return 0
+        malformed = [s for s in scores if s.status != "SUCCEEDED"]
+        with judge.catalog.connect() as scoped:
+            stage = scoped.get_experiment_stage(judge.exp)
+        print(
+            f"verified {len(scores)} pair-scores this run "
+            f"({len(scores) - len(malformed)} succeeded, {len(malformed)} malformed/failed); "
+            f"experiment stage={stage}"
+        )
+        # VERIFIED requires full usable coverage; a FAILED verification keeps the
+        # stage at VERIFYING and exits nonzero (plan 14: fail visibly).
+        return 0 if stage == "VERIFIED" else 1
 
     if args.command == "expected-scores":
         from avt.config import load_config

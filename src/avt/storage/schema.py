@@ -188,8 +188,7 @@ def _migrate_experiment(conn: sqlite3.Connection) -> None:
     cols = conn.execute("PRAGMA table_info(verifications)").fetchall()
     if not any(str(r[1]) == "malformed_attempts" for r in cols):
         conn.execute(
-            "ALTER TABLE verifications ADD COLUMN malformed_attempts "
-            "INTEGER NOT NULL DEFAULT 0"
+            "ALTER TABLE verifications ADD COLUMN malformed_attempts INTEGER NOT NULL DEFAULT 0"
         )
         conn.commit()
 

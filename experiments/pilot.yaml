@@ -3,7 +3,7 @@ experiment:
   seed: 42
   task_file: experiments/pilot_tasks.txt
   candidates_per_task: 3
-  max_parallel: 6
+  max_parallel: 4
 
 upstream:
   terminal_bench_commit: 69671fbaac6d67a7ef0dfec016cc38a64ef7a77c

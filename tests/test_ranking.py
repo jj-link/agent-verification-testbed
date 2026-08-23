@@ -183,6 +183,8 @@ def test_ranking_fails_without_full_pair_coverage(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError):
         ranker._rank_task("task_x")
+
+
 def test_ranking_fails_on_wrong_criterion(tmp_path: Path) -> None:
     """A wrong criterion slot is not masked by a matching total count."""
     ranker = _make(tmp_path)

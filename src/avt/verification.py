@@ -207,6 +207,8 @@ class PairScore:
     display_order: tuple[str, str]
     score_a: int
     score_b: int
+    status: str = "SUCCEEDED"
+    malformed_attempts: int = 0
 
 
 class DiscreteJudge:
@@ -239,6 +241,16 @@ class DiscreteJudge:
         rendered = render_trajectory(candidate_id_, task_id, atif, body_budget)
         return rendered.body_text
 
+    def _verifier_identity(self) -> dict[str, object]:
+        return {
+            "model": self.config.verifier.model,
+            "endpoint": self.config.verifier.endpoint,
+            "criteria": list(self.config.verifier.criteria),
+            "granularity": self.config.verifier.granularity,
+            "repetitions": self.config.verifier.repetitions,
+            "labels": list(SCORE_LABELS),
+        }
+
     def _persist(
         self,
         pair_id_: str,
@@ -253,14 +265,7 @@ class DiscreteJudge:
         score_b: int,
         malformed_attempts: int = 0,
     ) -> PairScore:
-        verifier_cfg = {
-            "model": self.config.verifier.model,
-            "endpoint": self.config.verifier.endpoint,
-            "criteria": list(self.config.verifier.criteria),
-            "granularity": self.config.verifier.granularity,
-            "repetitions": self.config.verifier.repetitions,
-            "labels": list(SCORE_LABELS),
-        }
+        verifier_cfg = self._verifier_identity()
         vid = verification_id(pair_id_, verifier_cfg, criterion, repetition, disp_a + "+" + disp_b)
         scores: dict[str, object] = {
             "score_a": score_a,
@@ -283,6 +288,56 @@ class DiscreteJudge:
                 malformed_attempts,
             )
         return PairScore(vid, pair_id_, criterion, repetition, (disp_a, disp_b), score_a, score_b)
+
+    def _persist_failed(
+        self,
+        pair_id_: str,
+        task_id: str,
+        criterion: str,
+        repetition: int,
+        disp_a: str,
+        disp_b: str,
+        request: object,
+        response: object,
+        malformed_attempts: int,
+    ) -> PairScore:
+        """Record a permanently-malformed verification as FAILED (plan 21 metric).
+
+        The twice-malformed raw response and request are retained as artifacts so
+        the malformed-output rate is measurable rather than lost.
+        """
+        verifier_cfg = self._verifier_identity()
+        vid = verification_id(pair_id_, verifier_cfg, criterion, repetition, disp_a + "+" + disp_b)
+        scores: dict[str, object] = {
+            "status": "FAILED",
+            "reason": "malformed_response",
+            "malformed_attempts": malformed_attempts,
+        }
+        artifact_paths = self.artifacts.write_verification(vid, request, response, scores)
+        with self.catalog.connect() as scoped:
+            scoped.record_verification(
+                vid,
+                pair_id_,
+                criterion,
+                repetition,
+                f"{disp_a}+{disp_b}",
+                "FAILED",
+                str(artifact_paths["request"]),
+                str(artifact_paths["response"]),
+                str(artifact_paths["scores"]),
+                malformed_attempts,
+            )
+        return PairScore(
+            vid,
+            pair_id_,
+            criterion,
+            repetition,
+            (disp_a, disp_b),
+            0,
+            0,
+            status="FAILED",
+            malformed_attempts=malformed_attempts,
+        )
 
     def _verify_pair(
         self,
@@ -337,7 +392,21 @@ class DiscreteJudge:
                 last_error = exc
                 continue
         if last_error is not None:
-            raise last_error
+            # Persistently malformed after the single retry: record a FAILED row
+            # (plan 21 malformed-rate metric) and continue, rather than aborting
+            # the whole run. MissingLabelError is a config failure and already
+            # raised above.
+            return self._persist_failed(
+                str(pair["pair_id"]),
+                task_id,
+                criterion,
+                repetition,
+                disp_a,
+                disp_b,
+                payload,
+                raw,
+                malformed_count,
+            )
         return self._persist(
             str(pair["pair_id"]),
             task_id,
@@ -365,9 +434,23 @@ class DiscreteJudge:
             with self.catalog.connect() as scoped:
                 pairs = scoped.list_pairs(self.exp, task)
             for pair in pairs:
+                # Resume: only make model calls for keys without a recorded
+                # terminal (SUCCEEDED or FAILED) outcome.
+                with self.catalog.connect() as scoped:
+                    done = scoped.terminal_verification_keys(str(pair["pair_id"]))
                 for criterion in self.config.verifier.criteria:
                     for rep in range(self.config.verifier.repetitions):
+                        if (criterion, rep) in done:
+                            continue
                         results.append(self._verify_pair(pair, task, criterion, rep))
+        # VERIFIED only with full usable coverage. A FAILED (persistently
+        # malformed) verification anywhere in this experiment's pairs removes
+        # coverage; stay VERIFYING so the gap stays visible (plan 14: fail
+        # visibly, never silently degrade coverage). Pool-wide count is used,
+        # not this run's `results`, so a resumed run that executes no new keys
+        # still sees a pre-existing FAILED row.
         with self.catalog.connect() as scoped:
-            scoped.set_experiment_stage(self.exp, "VERIFIED")
+            failed = scoped.count_failed_verifications(self.exp)
+        with self.catalog.connect() as scoped:
+            scoped.set_experiment_stage(self.exp, "VERIFIED" if failed == 0 else "VERIFYING")
         return results

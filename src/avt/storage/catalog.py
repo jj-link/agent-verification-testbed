@@ -470,6 +470,19 @@ class CatalogConnection:
         ).fetchone()
         return int(row[0])
 
+    def count_failed_verifications(self, experiment_id_: str) -> int:
+        """Number of FAILED (persistently-malformed) verifications in an experiment.
+
+        Pool-wide over this experiment's pairs, used to decide whether the
+        verification stage achieved full usable coverage before VERIFIED.
+        """
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM verifications v JOIN pairs p ON v.pair_id = p.pair_id "
+            "WHERE p.experiment_id=? AND v.status='FAILED'",
+            (experiment_id_,),
+        ).fetchone()
+        return int(row[0]) if row else 0
+
     def succeeded_verification_keys(self, pair_id: str) -> set[tuple[str, int]]:
         """SUCCEEDED (criterion, repetition) keys for a pair, for exact coverage."""
         rows = self._conn.execute(
@@ -479,9 +492,23 @@ class CatalogConnection:
         ).fetchall()
         return {(str(r[0]), int(r[1])) for r in rows}
 
+    def terminal_verification_keys(self, pair_id: str) -> set[tuple[str, int]]:
+        """Terminal (criterion, repetition) keys for a pair: SUCCEEDED or FAILED.
+
+        Used for resumable verification so a resumed or partial run only makes
+        model calls for keys that have no recorded terminal outcome.
+        """
+        rows = self._conn.execute(
+            "SELECT criterion, repetition FROM verifications "
+            "WHERE pair_id=? AND status IN ('SUCCEEDED','FAILED')",
+            (pair_id,),
+        ).fetchall()
+        return {(str(r[0]), int(r[1])) for r in rows}
+
 
 class Catalog:
     """Owns the experiment catalog database file and opens connections."""
+
     def __init__(self, path: Path) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -239,6 +239,7 @@ class GenerationService:
                 self.repo_root
                 / Path(self.config.storage.root)
                 / "generation"
+                / exp
                 / task_id
                 / str(attempt)
                 / str(round_no)
@@ -250,17 +251,13 @@ class GenerationService:
             # round advances to the next round slot rather than overwriting.
             if job_dir.is_dir():
                 trial, reward, exc_name = _find_trial_result(job_dir)
-                if trial is not None:
-                    if exc_name is not None:
-                        last_exc = exc_name
-                        continue
-                    if reward is None:
-                        last_exc = "existing trial produced no reward (ungraded)"
-                        continue
-                    self._persist(cand, task_id, attempt, trial, reward, job_dir)
-                    with self.catalog.connect() as scoped:
-                        scoped.mark_succeeded(_JOB_TYPE, cand)
-                    return CandidateResult(cand, task_id, attempt, reward, job_dir)
+                if reward is None:
+                    last_exc = exc_name or "existing trial produced no reward (ungraded)"
+                    continue
+                self._persist(cand, task_id, attempt, trial, reward, job_dir)
+                with self.catalog.connect() as scoped:
+                    scoped.mark_succeeded(_JOB_TYPE, cand)
+                return CandidateResult(cand, task_id, attempt, reward, job_dir)
 
             try:
                 job_dir = self.runner.run(self.config, task_id, attempt, out_dir, job_name)
@@ -269,14 +266,13 @@ class GenerationService:
                 continue  # stay RUNNING; retry next round
 
             trial, reward, exc_name = _find_trial_result(job_dir)
-            if exc_name:
-                last_exc = exc_name
-                continue
             if reward is None:
-                last_exc = "trial produced no reward (ungraded)"
+                last_exc = exc_name or "trial produced no reward (ungraded)"
                 continue
 
-            # Graded (reward may be 0.0 for a valid failed candidate).
+            # An official grade makes the trajectory usable even if the actor
+            # timed out or exited through a guard. Failed candidates are
+            # essential verifier data (plan candidate rules).
             self._persist(cand, task_id, attempt, trial, reward, job_dir)
             with self.catalog.connect() as scoped:
                 scoped.mark_succeeded(_JOB_TYPE, cand)

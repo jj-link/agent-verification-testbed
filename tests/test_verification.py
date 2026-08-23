@@ -220,6 +220,7 @@ def test_expected_scores_weighted_sum() -> None:
     assert abs(ra - 1.5) < 1e-6  # 0.5*1 + 0.5*2
     assert abs(rb - 3.0) < 1e-6  # 1.0*3
 
+
 def _single_pair(builder: DiscreteJudge, scratch: Path, ca: str, cb: str) -> str:
     from avt.storage.ids import pair_id
 
@@ -241,9 +242,7 @@ def test_malformed_retries_once_with_reminder(
 
     calls: list[dict[str, object]] = []
 
-    def fake_post(
-        url: str, payload: dict[str, object], timeout: int = 120
-    ) -> dict[str, object]:
+    def fake_post(url: str, payload: dict[str, object], timeout: int = 120) -> dict[str, object]:
         calls.append(payload)
         if len(calls) == 1:
             # malformed: only a single score-token position
@@ -280,9 +279,7 @@ def test_missing_label_fails_immediately_no_persist(
 
     calls: list[dict[str, object]] = []
 
-    def fake_post(
-        url: str, payload: dict[str, object], timeout: int = 120
-    ) -> dict[str, object]:
+    def fake_post(url: str, payload: dict[str, object], timeout: int = 120) -> dict[str, object]:
         calls.append(payload)
         content = [
             {"token": "B", "top_logprobs": _top(False, "B")},
@@ -298,3 +295,184 @@ def test_missing_label_fails_immediately_no_persist(
     assert len(calls) == 1  # never retried
     with judge.catalog.connect() as scoped:
         assert scoped._conn.execute("SELECT COUNT(*) FROM verifications").fetchone()[0] == 0
+
+
+def test_verify_all_resumes_skipping_terminal_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A partial or resumed run makes model calls only for missing keys.
+
+    SUCCEEDED and FAILED verification keys are terminal: a second run must not
+    re-call the model for them.
+    """
+    scratch = tmp_path / "scratch"
+    judge = _make(tmp_path)
+    ca, cb = _seed_pair(judge, scratch)
+    _single_pair(judge, scratch, ca, cb)
+    judge._body_for = lambda cid, task: f"BODY_{cid}"  # type: ignore[assignment]
+
+    # Record the criterion name into the user message, not the payload object.
+    calls: list[str] = []
+
+    def fake_post(url: str, payload: dict[str, object], timeout: int = 120) -> dict[str, object]:
+        msgs = cast(list[dict[str, str]], payload["messages"])
+        user = [m["content"] for m in msgs if m["role"] == "user"][0]
+        calls.append(str(user))
+        return _response("C", "B")
+
+    monkeypatch.setattr(V, "_post_json", fake_post)
+
+    # First run completes both criteria (specification, output => 2 calls).
+    judge.verify_all()
+    assert len(calls) == 2
+    full_run_calls = len(calls)
+
+    # A resumed run over a fully terminal pool adds no model calls.
+    judge.verify_all()
+    assert len(calls) == full_run_calls
+
+
+def test_verify_all_resumes_partial_pool_makes_only_missing_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When one criterion is already SUCCEEDED, resume calls only the missing one."""
+    scratch = tmp_path / "scratch"
+    judge = _make(tmp_path)
+    ca, cb = _seed_pair(judge, scratch)
+    pid = _single_pair(judge, scratch, ca, cb)
+    pair: dict[str, object] = {"pair_id": pid, "candidate_a": ca, "candidate_b": cb}
+    judge._body_for = lambda cid, task: f"BODY_{cid}"  # type: ignore[assignment]
+
+    calls: list[str] = []
+
+    def fake_post(url: str, payload: dict[str, object], timeout: int = 120) -> dict[str, object]:
+        msgs = cast(list[dict[str, str]], payload["messages"])
+        user = [m["content"] for m in msgs if m["role"] == "user"][0]
+        calls.append(str(user))
+        return _response("C", "B")
+
+    monkeypatch.setattr(V, "_post_json", fake_post)
+
+    # Prior partial run: only 'specification' completed.
+    judge._verify_pair(pair, "task_x", "specification", 0)
+    assert len(calls) == 1
+
+    judge.verify_all()
+    # 'specification' was not re-called; only the missing 'output' was.
+    assert len(calls) == 2
+    assert "produce the expected output" in calls[-1]
+
+
+def test_persistent_malformed_records_failed_not_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After the single malformed retry, a persistently-malformed response is
+    recorded as FAILED with the response artifact, not lost or crashed."""
+    scratch = tmp_path / "scratch"
+    judge = _make(tmp_path)
+    ca, cb = _seed_pair(judge, scratch)
+    pid = _single_pair(judge, scratch, ca, cb)
+    pair: dict[str, object] = {"pair_id": pid, "candidate_a": ca, "candidate_b": cb}
+    judge._body_for = lambda cid, task: f"BODY_{cid}"  # type: ignore[assignment]
+
+    def always_malformed(
+        url: str, payload: dict[str, object], timeout: int = 120
+    ) -> dict[str, object]:
+        return {
+            "choices": [
+                {"logprobs": {"content": [{"token": "A", "top_logprobs": _top(True, "A")}]}}
+            ]
+        }
+
+    monkeypatch.setattr(V, "_post_json", always_malformed)
+
+    ps = judge._verify_pair(pair, "task_x", "output", 0)
+    assert ps.status == "FAILED"
+    assert ps.malformed_attempts == 2  # initial draw plus one retry
+    with judge.catalog.connect() as scoped:
+        row = scoped._conn.execute(
+            "SELECT status, malformed_attempts, response_path FROM verifications"
+        ).fetchone()
+    assert row[0] == "FAILED"
+    assert row[1] == 2
+    assert row[2] and Path(str(row[2])).exists()
+
+
+def test_verify_all_skips_failed_key_on_resume(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A FAILED (persistently-malformed) key is terminal: resume does not re-call it."""
+    scratch = tmp_path / "scratch"
+    judge = _make(tmp_path)
+    ca, cb = _seed_pair(judge, scratch)
+    pid = _single_pair(judge, scratch, ca, cb)
+    pair: dict[str, object] = {"pair_id": pid, "candidate_a": ca, "candidate_b": cb}
+    judge._body_for = lambda cid, task: f"BODY_{cid}"  # type: ignore[assignment]
+
+    calls: list[str] = []
+
+    def malformed_post(
+        url: str, payload: dict[str, object], timeout: int = 120
+    ) -> dict[str, object]:
+        calls.append("malformed")
+        return {
+            "choices": [
+                {"logprobs": {"content": [{"token": "A", "top_logprobs": _top(True, "A")}]}}
+            ]
+        }
+
+    monkeypatch.setattr(V, "_post_json", malformed_post)
+    failed = judge._verify_pair(pair, "task_x", "output", 0)
+    assert failed.status == "FAILED"
+    assert len(calls) == 2  # initial draw plus one retry
+
+    # Now the endpoint is well-behaved; a resumed run must call only the
+    # missing 'specification' criterion and not re-call the FAILED 'output'.
+    def good_post(url: str, payload: dict[str, object], timeout: int = 120) -> dict[str, object]:
+        msgs = cast(list[dict[str, str]], payload["messages"])
+        user = [m["content"] for m in msgs if m["role"] == "user"][0]
+        calls.append(str(user))
+        return _response("C", "B")
+
+    monkeypatch.setattr(V, "_post_json", good_post)
+    judge.verify_all()
+    assert len(calls) == 3  # 2 malformed + 1 specification
+    assert "produce the expected output" not in calls[-1]
+
+
+def test_verify_all_does_not_claim_verified_with_preexisting_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resumed run that executes no new keys must still not claim VERIFIED when
+    a FAILED verification already exists anywhere in the experiment's pairs."""
+    scratch = tmp_path / "scratch"
+    judge = _make(tmp_path)
+    ca, cb = _seed_pair(judge, scratch)
+    pid = _single_pair(judge, scratch, ca, cb)
+    pair: dict[str, object] = {"pair_id": pid, "candidate_a": ca, "candidate_b": cb}
+    judge._body_for = lambda cid, task: f"BODY_{cid}"  # type: ignore[assignment]
+
+    def malformed_post(
+        url: str, payload: dict[str, object], timeout: int = 120
+    ) -> dict[str, object]:
+        return {
+            "choices": [
+                {"logprobs": {"content": [{"token": "A", "top_logprobs": _top(True, "A")}]}}
+            ]
+        }
+
+    monkeypatch.setattr(V, "_post_json", malformed_post)
+    judge._verify_pair(pair, "task_x", "output", 0)  # records FAILED
+
+    # Now a well-behaved endpoint; a resumed verify_all runs only missing keys.
+    def good_post(url: str, payload: dict[str, object], timeout: int = 120) -> dict[str, object]:
+        return _response("C", "B")
+
+    monkeypatch.setattr(V, "_post_json", good_post)
+    with judge.catalog.connect() as scoped:
+        assert scoped.count_failed_verifications(judge.exp) == 1
+    judge.verify_all()
+    with judge.catalog.connect() as scoped:
+        # A pre-existing FAILED still blocks the VERIFIED claim even after resume.
+        assert scoped.get_experiment_stage(judge.exp) == "VERIFYING"
+        assert scoped.count_failed_verifications(judge.exp) == 1
