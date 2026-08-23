@@ -1276,6 +1276,3 @@ plan-compliant ablation with full coverage.
 - Scorer, explicit forced mode, continuous-verifier G20 labels, tests, config,
   README, and this progress note all in milestone `0b54298` (tag
   `avt-v1.1.0`). Working tree clean.
-  requires a plan-compliant forced-token scorer, §13.2 — main re-frozen at G=5)
-  and Stage 18 (paid-API auth + spend cap not configured). G=20 remains a
-  documented ablation (plan §26.10); G=5 is the plan-compliant main granularity.
