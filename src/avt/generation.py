@@ -61,7 +61,14 @@ def qwen_settings_for(config: Config) -> dict[str, object]:
     }
     if config.generator.context_window is not None:
         generation_config["contextWindowSize"] = config.generator.context_window
-    return {"model": {"generationConfig": generation_config}}
+    model: dict[str, object] = {"generationConfig": generation_config}
+    if config.generator.max_wall_time_seconds is not None:
+        model["maxWallTimeSeconds"] = config.generator.max_wall_time_seconds
+    if config.generator.max_tool_calls is not None:
+        model["maxToolCalls"] = config.generator.max_tool_calls
+    if config.generator.skip_loop_detection is not None:
+        model["skipLoopDetection"] = config.generator.skip_loop_detection
+    return {"model": model}
 
 
 class _HarborRunner:

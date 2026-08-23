@@ -11,7 +11,7 @@ import pytest
 from avt import verification as V
 from avt.config import load_config
 from avt.pairs import display_order
-from avt.storage.ids import candidate_id, verification_id
+from avt.storage.ids import candidate_id, stable_hash, verification_id
 from avt.verification import (
     DiscreteJudge,
     MalformedVerifier,
@@ -506,6 +506,17 @@ def test_verify_all_does_not_claim_verified_with_preexisting_failed(
         assert scoped.count_failed_verifications(judge.exp) == 1
 
 
+def test_verify_all_keeps_zero_pair_experiment_verifying(tmp_path: Path) -> None:
+    """No expected verification keys is incomplete, never VERIFIED."""
+    judge = _make(tmp_path)
+    with judge.catalog.connect() as scoped:
+        scoped.upsert_experiment_config(judge.exp, {}, "PAIRED")
+        scoped.record_task(judge.exp, "task_x", "PUBLIC TASK")
+    assert judge.verify_all() == []
+    with judge.catalog.connect() as scoped:
+        assert scoped.get_experiment_stage(judge.exp) == "VERIFYING"
+
+
 def test_verifier_max_tokens_configurable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The discrete judge reads max_tokens from config and freezes it in the
     verifier identity, so changing it yields a distinct reproducible run."""
@@ -605,7 +616,7 @@ def test_judge_uses_granularity_labels(tmp_path: Path, monkeypatch: pytest.Monke
 def test_resume_purges_stale_prompt_identities(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Old SUCCEEDED/FAILED rows never satisfy or contaminate a new prompt id."""
+    """Replace stale identity data without touching another experiment's ranking."""
     scratch = tmp_path / "scratch"
     judge = _make(tmp_path)
     ca, cb = _seed_pair(judge, scratch)
@@ -650,11 +661,21 @@ def test_resume_purges_stale_prompt_identities(
                 "specification,output",
                 2,
             )
+        current_pool = stable_hash(sorted((ca, cb)))
+        other_pool = stable_hash(("other-candidate-a", "other-candidate-b"))
         scoped.record_ranking(
             "old-ranking",
             "task_x",
-            "old-pool",
+            current_pool,
             '{"method":"old"}',
+            '{"ranking":[]}',
+            "SUCCEEDED",
+        )
+        scoped.record_ranking(
+            "other-experiment-ranking",
+            "task_x",
+            other_pool,
+            '{"method":"other"}',
             '{"ranking":[]}',
             "SUCCEEDED",
         )
@@ -678,4 +699,7 @@ def test_resume_purges_stale_prompt_identities(
         assert scoped.get_experiment_stage(judge.exp) == "VERIFIED"
         assert scoped._conn.execute("SELECT COUNT(*) FROM expected_scores").fetchone()[0] == 0
         assert scoped._conn.execute("SELECT COUNT(*) FROM evaluation").fetchone()[0] == 0
-        assert scoped._conn.execute("SELECT COUNT(*) FROM rankings").fetchone()[0] == 0
+        rankings = scoped._conn.execute(
+            "SELECT ranking_id FROM rankings ORDER BY ranking_id"
+        ).fetchall()
+        assert [str(row[0]) for row in rankings] == ["other-experiment-ranking"]

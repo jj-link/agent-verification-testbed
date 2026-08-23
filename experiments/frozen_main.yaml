@@ -23,9 +23,14 @@ generator:
   endpoint: http://host.docker.internal:8000/v1
   temperature: 0.7
   max_tokens: 8192
-  timeout_multiplier: 100000
+  timeout_multiplier: 1.0
   context_window: 200000
   agent_version: "0.22.0"
+  # Six graded smoke trajectories completed within 53 tool calls / 407 seconds.
+  # Bound unattended stochastic outliers with margin instead of disabling timeout.
+  max_wall_time_seconds: 900
+  max_tool_calls: 64
+  skip_loop_detection: false
 
 verifier:
   model: qwen3.8-27b-6000pro
@@ -54,9 +59,11 @@ ranking:
   minimum_pair_coverage: 1.0
 
 storage:
-  root: .avt/main/
-  metadata_db: .avt/main/experiment.sqlite
-  ground_truth_db: .avt/main/ground_truth.sqlite
+  # Single-engine WSL execution: Harbor job dirs, artifacts, and SQLite stay on
+  # native ext4. DrvFS (/mnt/c) produced EIO during concurrent artifact writes.
+  root: /home/workbench/avt-data/main-v1/
+  metadata_db: /home/workbench/avt-data/main-v1/experiment.sqlite
+  ground_truth_db: /home/workbench/avt-data/main-v1/ground_truth.sqlite
 
 # --- Frozen serving / model identity (plan §26.2-26.3) ---
 # Served model id.........: qwen3.8-27b-6000pro

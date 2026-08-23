@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from avt.storage.ids import stable_hash
 from avt.storage.schema import create_experiment_schema
 
 __all__ = ["Catalog", "CatalogConnection", "Job"]
@@ -542,6 +543,12 @@ class CatalogConnection:
             )
         if cur.rowcount and pair is not None:
             experiment_id_, task_id = str(pair[0]), str(pair[1])
+            candidate_rows = self._conn.execute(
+                "SELECT candidate_id FROM candidates "
+                "WHERE experiment_id=? AND task_id=? ORDER BY candidate_id",
+                (experiment_id_, task_id),
+            ).fetchall()
+            candidate_ids = [str(row[0]) for row in candidate_rows]
             candidate_subquery = (
                 "SELECT candidate_id FROM candidates WHERE experiment_id=? AND task_id=?"
             )
@@ -553,7 +560,11 @@ class CatalogConnection:
                 f"DELETE FROM evaluation WHERE candidate_id IN ({candidate_subquery})",
                 (experiment_id_, task_id),
             )
-            self._conn.execute("DELETE FROM rankings WHERE task_id=?", (task_id,))
+            if candidate_ids:
+                self._conn.execute(
+                    "DELETE FROM rankings WHERE task_id=? AND pool_hash=?",
+                    (task_id, stable_hash(candidate_ids)),
+                )
         self._conn.commit()
         return cur.rowcount
 

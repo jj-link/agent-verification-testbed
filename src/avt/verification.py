@@ -493,7 +493,8 @@ class DiscreteJudge:
             if line.strip() and not line.lstrip().startswith("#")
         ]
         results: list[PairScore] = []
-        failed = False
+        expected_count = 0
+        succeeded_count = 0
         verifier_cfg = self._verifier_identity()
         for task in tasks:
             with self.catalog.connect() as scoped:
@@ -513,6 +514,7 @@ class DiscreteJudge:
                             rep,
                             disp_a + "+" + disp_b,
                         )
+                expected_count += len(current_ids)
                 # Clean cutover: stale prompt/model/output-policy identities must
                 # not satisfy resume or contaminate downstream aggregation. The
                 # content-addressed artifacts remain on disk for audit.
@@ -521,12 +523,16 @@ class DiscreteJudge:
                 for (criterion, rep), current_vid in current_ids.items():
                     with self.catalog.connect() as scoped:
                         status = scoped.verification_status(current_vid)
-                    if status in {"SUCCEEDED", "FAILED"}:
-                        failed = failed or status == "FAILED"
+                    if status == "SUCCEEDED":
+                        succeeded_count += 1
+                        continue
+                    if status == "FAILED":
                         continue
                     result = self._verify_pair(pair, task, criterion, rep)
                     results.append(result)
-                    failed = failed or result.status == "FAILED"
+                    if result.status == "SUCCEEDED":
+                        succeeded_count += 1
+        verified = expected_count > 0 and succeeded_count == expected_count
         with self.catalog.connect() as scoped:
-            scoped.set_experiment_stage(self.exp, "VERIFYING" if failed else "VERIFIED")
+            scoped.set_experiment_stage(self.exp, "VERIFIED" if verified else "VERIFYING")
         return results

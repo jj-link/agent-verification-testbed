@@ -8,7 +8,12 @@ from pathlib import Path
 import pytest
 
 from avt.config import load_config
-from avt.generation import GenerationService, InfrastructureFailure, _HarborRunner
+from avt.generation import (
+    GenerationService,
+    InfrastructureFailure,
+    _HarborRunner,
+    qwen_settings_for,
+)
 from avt.storage.ids import candidate_id as cid
 
 CONFIG_YAML = """
@@ -180,6 +185,31 @@ def test_harbor_env_forces_utf8() -> None:
     env = _HarborRunner.harbor_env()
     assert env["PYTHONUTF8"] == "1"
     assert env["PYTHONIOENCODING"] == "utf-8"
+
+
+def test_qwen_settings_freeze_unattended_budgets(tmp_path: Path) -> None:
+    cfg_text = CONFIG_YAML.replace(
+        "  max_tokens: 8192\n",
+        "  max_tokens: 8192\n"
+        "  max_wall_time_seconds: 900\n"
+        "  max_tool_calls: 64\n"
+        "  skip_loop_detection: false\n",
+    )
+    cfg_text = cfg_text.replace("__TASKFILE__", (tmp_path / "tasks.txt").as_posix()).replace(
+        "__ROOT__", (tmp_path / "avt").as_posix()
+    )
+    (tmp_path / "tasks.txt").write_text("task_x\n", encoding="utf-8")
+    cfg_path = tmp_path / "bounded.yaml"
+    cfg_path.write_text(cfg_text, encoding="utf-8")
+    cfg = load_config(cfg_path)
+    assert cfg.generator.max_wall_time_seconds == 900
+    assert cfg.generator.max_tool_calls == 64
+    assert cfg.generator.skip_loop_detection is False
+    model = qwen_settings_for(cfg)["model"]
+    assert isinstance(model, dict)
+    assert model["maxWallTimeSeconds"] == 900
+    assert model["maxToolCalls"] == 64
+    assert model["skipLoopDetection"] is False
 
 
 def test_generation_pins_agent_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

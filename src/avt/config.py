@@ -55,6 +55,9 @@ class Generator:
     timeout_multiplier: float = 1.0
     context_window: int | None = None
     agent_version: str = "0.22.0"
+    max_wall_time_seconds: int | None = None
+    max_tool_calls: int | None = None
+    skip_loop_detection: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -113,6 +116,12 @@ def _float(d: dict[str, object], key: str) -> float:
     return float(value)
 
 
+def _bool(d: dict[str, object], key: str) -> bool:
+    value = d[key]
+    assert isinstance(value, bool)
+    return value
+
+
 def _str_list(d: dict[str, object], key: str) -> tuple[str, ...]:
     value = d[key]
     assert isinstance(value, list)
@@ -149,6 +158,13 @@ def load_config(path: str | Path) -> Config:
             else 1.0,
             context_window=_int(gen, "context_window") if "context_window" in gen else None,
             agent_version=_str(gen, "agent_version") if "agent_version" in gen else "0.22.0",
+            max_wall_time_seconds=_int(gen, "max_wall_time_seconds")
+            if "max_wall_time_seconds" in gen
+            else None,
+            max_tool_calls=_int(gen, "max_tool_calls") if "max_tool_calls" in gen else None,
+            skip_loop_detection=_bool(gen, "skip_loop_detection")
+            if "skip_loop_detection" in gen
+            else None,
         ),
         verifier=Verifier(
             model=_str(ver, "model"),
