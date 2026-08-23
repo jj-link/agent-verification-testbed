@@ -44,13 +44,13 @@ storage:
 """
 
 
-def _make(tmp_path: Path) -> RoundRobinRanker:
+def _make(tmp_path: Path, selector: str = "continuous") -> RoundRobinRanker:
     (tmp_path / "tasks.txt").write_text("task_x\n", encoding="utf-8")
     cfg = CONFIG_YAML.replace("__TASKFILE__", (tmp_path / "tasks.txt").as_posix())
     cfg = cfg.replace("__ROOT__", (tmp_path / "avt").as_posix())
     cfg_path = tmp_path / "smoke.yaml"
     cfg_path.write_text(cfg, encoding="utf-8")
-    return RoundRobinRanker(load_config(cfg_path), tmp_path)
+    return RoundRobinRanker(load_config(cfg_path), tmp_path, selector=selector)
 
 
 def _pair_id(a: str, b: str) -> str:
@@ -86,6 +86,19 @@ def _seed(
         for a in range(n):
             for b in range(a + 1, n):
                 pid = _pair_id(cids[a], cids[b])
+                scores_path = Path(ranker.config.storage.root) / f"{pid}-scores.json"
+                scores_path.parent.mkdir(parents=True, exist_ok=True)
+                scores_path.write_text(
+                    json.dumps(
+                        {
+                            "score_a": int(raw_scores[a]),
+                            "score_b": int(raw_scores[b]),
+                            "criterion": "specification",
+                            "repetition": 0,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
                 sc.record_pair(pid, ranker.exp, "task_x", cids[a], cids[b], "SUCCEEDED")
                 if drop_verification:
                     continue
@@ -100,7 +113,7 @@ def _seed(
                     "SUCCEEDED",
                     None,
                     None,
-                    None,
+                    str(scores_path),
                     m,
                 )
                 if duplicate_verification:
@@ -113,7 +126,7 @@ def _seed(
                         "SUCCEEDED",
                         None,
                         None,
-                        None,
+                        str(scores_path),
                         m,
                     )
     return cids
@@ -135,6 +148,44 @@ def test_highest_aggregate_ranks_first(tmp_path: Path) -> None:
     # ranking persisted immutably
     with ranker.catalog.connect() as sc:
         assert sc._conn.execute("SELECT COUNT(*) FROM rankings").fetchone()[0] == 1
+
+
+def test_discrete_argmax_scores_rank_same_frozen_pool(tmp_path: Path) -> None:
+    ranker = _make(tmp_path, selector="discrete")
+    candidate_ids = _seed(ranker, 3, [1.0, 5.0, 3.0])
+
+    record = ranker._rank_task("task_x")
+
+    assert record.selector_config["selector"] == "discrete"
+    assert record.selector_config["scoring"] == "discrete_argmax"
+    assert record.ranking[0].candidate_id == candidate_ids[1]
+    assert record.ranking[0].score == 5.0
+
+
+def test_random_selector_is_deterministic_without_verifier_data(tmp_path: Path) -> None:
+    ranker = _make(tmp_path, selector="random")
+    candidate_ids = [candidate_id(ranker.exp, "task_x", i) for i in range(5)]
+    with ranker.catalog.connect() as scoped:
+        scoped.upsert_experiment_config(ranker.exp, {}, "GENERATED")
+        scoped.record_task(ranker.exp, "task_x", "PUBLIC TASK")
+        for attempt, candidate_id_ in enumerate(candidate_ids):
+            scoped.record_candidate(
+                candidate_id_,
+                ranker.exp,
+                "task_x",
+                attempt,
+                "SUCCEEDED",
+                None,
+                None,
+            )
+
+    first = ranker._rank_task("task_x")
+    second = RoundRobinRanker(ranker.config, tmp_path, selector="random")._rank_task("task_x")
+
+    assert first == second
+    assert {candidate.candidate_id for candidate in first.ranking} == set(candidate_ids)
+    assert all(candidate.score is None for candidate in first.ranking)
+    assert all(candidate.utility is None for candidate in first.ranking)
 
 
 def test_rank_all_no_grader_consulted(tmp_path: Path) -> None:

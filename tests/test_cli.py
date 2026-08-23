@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from avt.cli import main
+from avt.cli import build_parser, main
 
 
 def test_version_flag(capsys: pytest.CaptureFixture[str]) -> None:
@@ -32,3 +32,12 @@ def test_select_tasks_requires_config(capsys: pytest.CaptureFixture[str]) -> Non
     with pytest.raises(SystemExit) as exc:
         main(["select-tasks"])
     assert exc.value.code == 2
+
+
+def test_rank_selector_choices() -> None:
+    parser = build_parser()
+    assert parser.parse_args(["rank", "--config", "x.yaml"]).selector == "continuous"
+    assert (
+        parser.parse_args(["rank", "--config", "x.yaml", "--selector", "discrete"]).selector
+        == "discrete"
+    )

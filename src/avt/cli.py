@@ -36,8 +36,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_eval = sub.add_parser("evaluate", help="compute three-criterion aggregate scores")
     p_eval.add_argument("--config", required=True, help="experiment config path")
 
-    p_rank = sub.add_parser("rank", help="rank each task pool (round-robin BT)")
+    p_rank = sub.add_parser("rank", help="rank each task pool with a local selector")
     p_rank.add_argument("--config", required=True, help="experiment config path")
+    p_rank.add_argument(
+        "--selector",
+        choices=("random", "discrete", "continuous"),
+        default="continuous",
+        help="local selector (default: continuous)",
+    )
 
     return parser
 
@@ -142,11 +148,12 @@ def main(argv: list[str] | None = None) -> int:
         from avt.ranking import RoundRobinRanker
 
         cfg = load_config(args.config)
-        rankings = RoundRobinRanker(cfg, Path.cwd()).rank_all()
+        rankings = RoundRobinRanker(cfg, Path.cwd(), selector=args.selector).rank_all()
         for rec in rankings:
             top = rec.ranking[0]
-            print(f"{rec.task_id}: top={top.candidate_id} utility={top.utility:.4f}")
-        print(f"ranked {len(rankings)} tasks")
+            utility = "n/a" if top.utility is None else f"{top.utility:.4f}"
+            print(f"{rec.task_id}: top={top.candidate_id} utility={utility}")
+        print(f"ranked {len(rankings)} tasks with selector={args.selector}")
         return 0
 
     parser.error(f"unknown command: {args.command}")
