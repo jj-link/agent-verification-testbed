@@ -1084,3 +1084,46 @@ and are not reused.
 - Generate the fresh 125-candidate main pool from `/home/workbench/avt-data/main-v1/`
   under `experiment-v1.1` (`945140192175d4775e1997f80192a3e6`); the 15 candidates
   produced by the superseded max_parallel=1 identity were archived, not reused.
+
+## Stage 17 main study — completed (`experiment-v1.1`)
+
+**Status:** complete. All local selectors ranked the identical frozen pools
+(plan stage 17 acceptance).
+
+### Pool
+
+- 125/125 candidates `SUCCEEDED` (25 tasks x 5), 4 concurrent workers over the
+  single Qwen SGLang server, ~1h20m. 250 pairs built (10 per task).
+- 750 verifications (250 pairs x 3 criteria x 1 rep) all `SUCCEEDED`; stage
+  `VERIFIED`. Zero malformed/failed.
+- 375 expected-score records (125 candidates x 3 criteria); 125 evaluations.
+
+### Rankings (identical pools, three local selectors)
+
+- 75 ranking records `SUCCEEDED` (25 tasks x 3 selectors): deterministic
+  `random`, `discrete` argmax, `continuous` expectation round-robin BT.
+- Top-pick agreement: discrete==continuous 21/25; continuous==random 3/25.
+
+### Measurement (official rewards from `ground_truth.sqlite`)
+
+Pool: 26/125 candidates pass (reward 1.0) = 20.8% base rate.
+
+| Selector | Top-pass rate | Mean selected-top reward |
+|---|---:|---:|
+| random | 5/25 (20.0%) | 0.200 |
+| discrete | 11/25 (44.0%) | 0.440 |
+| continuous | 11/25 (44.0%) | 0.440 |
+
+Paired task-bootstrap (20k resamples, seed 42), mean selected-top reward:
+- continuous - random: **+0.240, 95% CI [0.080, 0.400]** (excludes 0; significant)
+- continuous - discrete: 0.000 (identical pass rate)
+
+Full §22/§19 analysis (token/latency medians, verifier accuracy, report) is the
+Stage 19 deliverable; this stage closes the run and the local-selector rankings.
+
+### Commit
+
+- Selectors: `2897efc` (random/discrete/continuous rank subcommand + tests; 91
+  tests pass). Frozen config `8d26942`; progress `7790254`.
+- Next: Stage 18 frontier-assisted ablation (optional, frozen pools only) or
+  Stage 19 analyze/publish.
