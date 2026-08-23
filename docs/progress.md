@@ -1178,9 +1178,14 @@ blocker below).
 - `analysis/generate_figures.py` (reproducible analysis).
 - README results summary + reproduction.
 
-### Release (pending checks/commit/tag/push)
+### Release — completed
 
-- `experiment-v1.1` is the immutable config freeze.
-- Planned public release tag: `avt-v1.0.0` (contains analysis + results +
-  report + README); reproduction checks it out.
-- Planned mark-complete after tests, lint, commit, and tag push succeed.
+- Public release tag **`avt-v1.0.0`** pushed, containing `analysis/`,
+  `results/` (report, stats, 3 figures), and the README results summary.
+  Reproduction checks out `avt-v1.0.0`.
+- `experiment-v1.1` remains the immutable experiment-config freeze.
+- Milestone commit: `b581d85`.
+- Gate: ruff check/format clean (incl. `analysis/`), mypy clean, **91 tests
+  passed**, figures visually verified via browser render.
+- All plan stages 1-17 and 19 complete; Stage 18 blocked by design (paid-API
+  auth + spend cap not configured).
