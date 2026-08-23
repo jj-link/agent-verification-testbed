@@ -288,3 +288,50 @@ def test_rerun_complete_pool_recovers_graded_rewards_without_harbor(tmp_path: Pa
     assert len(second) == 1
     assert second[0].reward == 0.75  # frozen reward, not None
     assert harbor_calls[0] == 1  # unchanged — nothing was re-run
+
+
+def test_rc1_graded_actor_error_is_accepted_not_retried(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A nonzero Harbor rc with a graded (reward 0) trial is a usable candidate:
+    it must be accepted, not retried into a wasteful fresh round."""
+    service, _ = _make_service(tmp_path)
+    calls: list[int] = []
+
+    def fake_subprocess(cmd: list[str], **kwargs: object) -> object:
+        calls.append(1)
+        out_dir = Path(cmd[cmd.index("-o") + 1])
+        job_name = cmd[cmd.index("--job-name") + 1]
+        job_dir = out_dir / job_name
+        _write_trial(job_dir, reward=0.0, exc="AgentTimeoutError")
+        return type("P", (), {"returncode": 1, "stderr": "agent error", "stdout": ""})()
+
+    monkeypatch.setattr("avt.generation.subprocess.run", fake_subprocess)
+    res = service.generate_one("task_x", 0)
+    assert res.reward == 0.0
+    assert len(calls) == 1  # no retry round burned
+    with service.catalog.connect() as scoped:
+        assert scoped.count_jobs("candidate", "SUCCEEDED") == 1
+        assert scoped.count_jobs("candidate", "RETRYABLE_FAILED") == 0
+
+
+def test_rc1_ungraded_is_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A nonzero rc with NO official grade is infrastructure: it retries (bounded)."""
+    service, _ = _make_service(tmp_path)
+    calls: list[int] = []
+
+    def fake_subprocess(cmd: list[str], **kwargs: object) -> object:
+        calls.append(1)
+        out_dir = Path(cmd[cmd.index("-o") + 1])
+        job_name = cmd[cmd.index("--job-name") + 1]
+        job_dir = out_dir / job_name
+        # no verifier_result -> ungraded
+        _write_trial(job_dir, reward=None, exc="AgentTimeoutError")
+        return type("P", (), {"returncode": 1, "stderr": "x", "stdout": ""})()
+
+    monkeypatch.setattr("avt.generation.subprocess.run", fake_subprocess)
+    with pytest.raises(InfrastructureFailure):
+        service.generate_one("task_x", 0)
+    assert len(calls) == 3  # max_rounds = 1 + 2 infra retries, each an ungraded round
+    with service.catalog.connect() as scoped:
+        assert scoped.count_jobs("candidate", "PERMANENT_FAILED") == 1

@@ -157,7 +157,13 @@ class _HarborRunner:
             env=self.harbor_env(),
         )
         job_dir = out_dir / job_name
-        if result.returncode != 0 or not job_dir.is_dir():
+        if not job_dir.is_dir():
+            # Harbor exited nonzero with no output dir -> nothing to inspect, so it
+            # is an infrastructure failure. When a job dir exists even under a
+            # nonzero rc (e.g. the actor exited through a guard after a graded
+            # trial), return it so generate_one inspects for an official grade
+            # before deciding to retry -- avoids burning a fresh round (and its
+            # tokens) on an already-graded actor-error trajectory.
             detail = (result.stderr or result.stdout or "")[-2000:]
             raise InfrastructureFailure(f"harbor run failed rc={result.returncode}: {detail}")
         return job_dir
