@@ -278,11 +278,24 @@ class CatalogConnection:
         ).fetchone()
         if row is not None:
             current = (
-                row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7],
+                row[0],
+                row[1],
+                row[2],
+                row[3],
+                row[4],
+                row[5],
+                row[6],
+                row[7],
             )
             incoming = (
-                pair_id, criterion, repetition, display_order_, status,
-                request_path, response_path, scores_path,
+                pair_id,
+                criterion,
+                repetition,
+                display_order_,
+                status,
+                request_path,
+                response_path,
+                scores_path,
             )
             if current != incoming:
                 raise ValueError(
@@ -295,8 +308,16 @@ class CatalogConnection:
             "repetition, display_order, status, request_path, response_path, "
             "scores_path, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
             (
-                verification_id_, pair_id, criterion, repetition, display_order_,
-                status, request_path, response_path, scores_path, _now(),
+                verification_id_,
+                pair_id,
+                criterion,
+                repetition,
+                display_order_,
+                status,
+                request_path,
+                response_path,
+                scores_path,
+                _now(),
             ),
         )
         self._conn.commit()
@@ -328,6 +349,37 @@ class CatalogConnection:
             "INSERT INTO expected_scores(candidate_id, criterion, raw_expected_score, "
             "normalized_score, observations, created_at) VALUES(?,?,?,?,?,?)",
             (candidate_id_, criterion, raw_expected_score, normalized_score, observations, _now()),
+        )
+        self._conn.commit()
+
+    def record_ranking(
+        self,
+        ranking_id_: str,
+        task_id: str,
+        pool_hash: str,
+        selector_config: str,
+        result: str,
+        status: str,
+    ) -> None:
+        """Record a ranking immutably (no-op if identical, conflict raises)."""
+        row = self._conn.execute(
+            "SELECT task_id, pool_hash, selector_config, result, status "
+            "FROM rankings WHERE ranking_id=?",
+            (ranking_id_,),
+        ).fetchone()
+        incoming = (task_id, pool_hash, selector_config, result, status)
+        if row is not None:
+            current = (row[0], row[1], row[2], row[3], row[4])
+            if current != incoming:
+                raise ValueError(
+                    f"ranking conflict for {ranking_id_!r}: "
+                    f"existing {current!r} vs new {incoming!r}"
+                )
+            return
+        self._conn.execute(
+            "INSERT INTO rankings(ranking_id, task_id, pool_hash, selector_config, "
+            "result, status, created_at) VALUES(?,?,?,?,?,?,?)",
+            (ranking_id_, task_id, pool_hash, selector_config, result, status, _now()),
         )
         self._conn.commit()
 

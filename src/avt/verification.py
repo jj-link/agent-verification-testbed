@@ -157,9 +157,7 @@ def _both_label_probs(
         if isinstance(c.get("token"), str) and _label_of(str(c["token"])) in SCORE_LABELS
     ]
     if len(label_indices) < 2:
-        raise MalformedVerifier(
-            f"expected >= 2 score-token positions, found {len(label_indices)}"
-        )
+        raise MalformedVerifier(f"expected >= 2 score-token positions, found {len(label_indices)}")
     top0 = content_logprobs[label_indices[0]].get("top_logprobs")
     top1 = content_logprobs[label_indices[1]].get("top_logprobs")
     return (

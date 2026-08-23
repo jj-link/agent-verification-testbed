@@ -86,8 +86,8 @@ class ContinuousVerifier:
             response_path = vr.get("response_path")
             if not response_path:
                 raise CoverageError(
-                f"verification missing response artifact: {vr.get('verification_id')}"
-            )
+                    f"verification missing response artifact: {vr.get('verification_id')}"
+                )
             try:
                 response = json.loads(Path(str(response_path)).read_text(encoding="utf-8"))
                 raw_a, raw_b = expected_scores_from_logprobs(_content_logprobs(response))
@@ -121,7 +121,5 @@ class ContinuousVerifier:
                 norm = (raw - 1.0) / (self._G - 1.0)
                 results.append(ExpectedScore(candidate_id, criterion, raw, norm, len(values)))
                 with self.catalog.connect() as scoped:
-                    scoped.record_expected_score(
-                        candidate_id, criterion, raw, norm, len(values)
-                    )
+                    scoped.record_expected_score(candidate_id, criterion, raw, norm, len(values))
         return results

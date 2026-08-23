@@ -551,7 +551,65 @@ the frozen pool.
 - Stage 11: `src/avt/evaluation.py`, `src/avt/storage/schema.py`,
   `src/avt/storage/catalog.py`, `src/avt/cli.py`, `tests/test_evaluation.py`.
 
+## Stage 12 — Round-robin Bradley-Terry ranking
+
+**Status:** complete. Each task pool is ranked by round-robin win utility derived
+only from the Stage-11 aggregate expected scores; a candidate is selected per
+task without consulting the ground-truth store.
+
+### Work
+
+- `src/avt/ranking.py`: `RoundRobinRanker` computes per-candidate utility
+  `u_i = mean_{j != i} sigmoid(R_i - R_j)` (R = aggregate expected score) and
+  ranks each task pool stably. Tie-breaking per plan 14: higher mean expected
+  score, then lexicographically lower deterministic candidate id; the numeric
+  "higher is better" columns are negated so an ascending stable sort still
+  puts the lower id first.
+  - Tie-break 2 ("fewer malformed verifier records") is not applied: no
+    malformed counter is persisted. Under the plan's 100% usable-pair-coverage
+    guarantee, malformed verifier output is retried to a valid parse or fails
+    the job, so surviving candidates have no captured malformed records
+    (verified against the schema). Adding a persistent counter would be
+    speculative infrastructure the plan does not require.
+  - `_validate_no_grader` guards that ranking opens only `experiment.sqlite`;
+    `ground_truth.sqlite` is a separate file never opened here.
+- Schema: `rankings(ranking_id, task_id, pool_hash, selector_config, result,
+  status)` (immutable); catalog `record_ranking` rejects a conflicting rewrite,
+  identical rewrites are a no-op.
+- CLI: `avt rank --config …` ranks every task and prints each task's top
+  candidate and utility.
+- `ranking_id = hash(task_id, pool_hash, selector_config)` (plan 7), making the
+  stage idempotent and resumable.
+
+### Checks
+
+- `uv run pytest tests/test_ranking.py -q` — 6 passed (new: sigmoid, highest
+  aggregate ranks first, rank_all consults no grader, lower-id tie-break,
+  conflicting rerun raises, missing-aggregate fails visibly).
+- Full suite `uv run pytest -q` — 64 passed (includes the generation test;
+  `harbor` resolves from the venv `tbench` extra).
+- `uv run ruff check .` — clean; `uv run ruff format --check .` — clean.
+- `uv run mypy .` — no issues (28 source files).
+- Verified on `smoke-rtx-v3` (frozen, 2 tasks × 3 candidates): `avt rank`
+  ranked both tasks; manual recomputation of the round-robin utilities matches
+  the stored results; the top candidate is the one with the highest aggregate
+  expected score. Re-running is idempotent (2 ranking rows unchanged), and the
+  experiment DB contains no `official_results` table (ground-truth isolation).
+
+### Decisions
+
+- Kept the tie-break to score then id; malformed-record tie-break omitted as
+  vacuous under 100% coverage (see Work). This is a reasoned deviation, not a
+  silent method change — ranking still fails visibly on unusable pairs.
+- Ranking never consults the official grader, per plan 14 "Never use the
+  official grader for tie-breaking" and the ground-truth isolation guarantee.
+
+### Commit
+
+- Stage 12: `src/avt/ranking.py`, `src/avt/storage/catalog.py`,
+  `src/avt/cli.py`, `tests/test_ranking.py`.
+
 ### Next action
 
-Proceed to Stage 12 (round-robin ranker) using the frozen `smoke-rtx-v3`
-scores.
+Proceed to Stage 13 (smoke test: two tasks, three candidates, pipeline runs
+end to end) using the frozen `smoke-rtx-v3` pool.
