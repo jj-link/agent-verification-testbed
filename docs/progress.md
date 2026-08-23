@@ -1025,3 +1025,53 @@ Review flagged that the G=20 pipeline violated the frozen plan:
 
 - Model server (port 8000) remains down / container removed; re-running the
   (now G=5) main verification/generation requires restoring it.
+
+## Stage 17 infrastructure correction — single WSL engine and bounded actor
+
+**Status:** complete. Main generation remains unstarted under the corrected
+experiment identity; the earlier 60 candidates belong to superseded config/storage
+and are not reused.
+
+### Decisions and fixes
+
+- Consolidated both LMW/SGLang and Harbor on the `NVIDIA-Workbench` local Docker
+  daemon. Docker Desktop is no longer in the execution path. Source remains on
+  `/mnt/c`, but every mutable experiment path (Harbor job dirs, Qwen settings,
+  artifacts, and SQLite) is now WSL-native under
+  `/home/workbench/avt-data/main-v1/`.
+- Created an isolated WSL runtime: CPython 3.12.13, declared `harbor==0.22.0`,
+  editable AVT source, and the declared dev tools.
+- A first connectivity smoke on `distribution-search` exposed a stochastic
+  runaway: 171 model responses / 136 tool calls over 24 minutes, 14,399,471 input
+  and 152,893 output tokens, cancelled without a grade. Root control failure:
+  `timeout_multiplier: 100000` disabled Harbor's 3,600-second task timeout and
+  Qwen had unlimited cumulative tools/wall time.
+- Six prior graded smoke trajectories completed within 53 tool calls and 407
+  seconds. The corrected freeze uses evidence-based margins:
+  `timeout_multiplier: 1.0`, Qwen `maxWallTimeSeconds: 900`,
+  `maxToolCalls: 64`, and `skipLoopDetection: false`.
+- A second smoke exposed DrvFS `EIO` while Harbor collected artifacts under
+  `/mnt/c`; its automatic retry was stopped and no task container was left.
+  Moving storage to native ext4 resolved it.
+- Fixed verifier stage completion so zero expected keys remain `VERIFYING`.
+  Superseded prompt identities still invalidate derived data atomically, but
+  ranking deletion is now scoped to the affected experiment's exact pool hash;
+  another experiment's same-task ranking is preserved.
+
+### Acceptance evidence
+
+- WSL-native bounded smoke (`cancel-async-tasks`) completed normally in 54 seconds
+  with one official terminal grade (`0.0` is a valid measured outcome), no retry,
+  no exception, 206,489 input tokens, and 1,072 output tokens. Catalog:
+  1 `SUCCEEDED` candidate, 1 `SUCCEEDED` job.
+- Model doctor: endpoint/model identity/logprobs/G=5 single-token labels all PASS.
+- Corrected `main-v1`: 25 tasks x 5 candidates, G=5, WSL-native storage, experiment
+  id `945140192175d4775e1997f80192a3e6`.
+- Full WSL gate: **88 tests passed**; ruff check/format and mypy clean.
+
+### Commit / next action
+
+- Implementation commit: `20a6a9d`.
+- Repoint `experiment-v1.0`, then generate the fresh 125-candidate main pool from
+  `/home/workbench/avt-data/main-v1/`; do not resume the superseded 60-candidate
+  Windows/old-config pool.
