@@ -29,6 +29,7 @@ verifier:
     - errors
   granularity: 20
   repetitions: 1
+  top_logprobs: 300
 
 rendering:
   max_pair_context_tokens: 120000

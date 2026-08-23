@@ -241,6 +241,7 @@ class DiscreteJudge:
         self.exp = experiment_id(config.raw)
         self.endpoint = normalize_endpoint(config.verifier.endpoint).rstrip("/")
         self._max_tokens = int(getattr(config.verifier, "max_tokens", 16) or 16)
+        self._top_logprobs = int(getattr(config.verifier, "top_logprobs", 300) or 300)
         self._labels = labels_for_granularity(int(config.verifier.granularity))
 
     def _body_for(self, candidate_id_: str, task_id: str) -> str:
@@ -273,6 +274,7 @@ class DiscreteJudge:
             "repetitions": self.config.verifier.repetitions,
             "labels": list(self._labels),
             "max_tokens": self._max_tokens,
+            "top_logprobs": self._top_logprobs,
         }
 
     def _persist(
@@ -383,7 +385,7 @@ class DiscreteJudge:
             "messages": messages,
             "max_tokens": self._max_tokens,
             "logprobs": True,
-            "top_logprobs": _TOP_LOGPROBS,
+            "top_logprobs": self._top_logprobs,
             "chat_template_kwargs": {"enable_thinking": False},
         }
         # Plan 15 retry policy: a malformed output is retried exactly once with a
