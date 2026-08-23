@@ -918,3 +918,40 @@ G=20 label coverage required two fixes:
 - `50dff29` top_logprobs config (G=20 coverage); `ded55b1` missing-subset-label
   relaxation; earlier `36f24a2` granularity labels, `9c87efe` runner rc fix,
   `50dff29`/`ded55b1` above. (Docs commit follows.)
+
+## Stage 16 — Freeze main experiment (experiment-v1.0)
+
+**Status:** complete. `experiments/frozen_main.yaml` committed and tagged
+`experiment-v1.0` (pushed).
+
+### Work
+
+- Selected 25 main-study tasks deterministically (seed 42) from terminal-bench-2 at
+  the pinned commit; pilot (8) and smoke (2) are subsets of main (25). Wrote
+  `experiments/main_tasks.txt` (25 tasks).
+- Recorded the exact serving identity of the RTX-6000-pro deployment used for
+  generation+verification: `qwen3.8-27b-6000pro` (Qwen3.5), modelopt mixed
+  FP8/NVFP4 (attention/linear_attn FP8, MLP + lm_head NVFP4 gs16, KV cache FP8),
+  base snapshot `52d1adc5`, drafter `50307d4c`, SGLang `qwen38-27b`, context
+  262144. Frozen in `frozen_main.yaml`.
+- Frozen all plan-§26 decisions: task IDs, checkpoint/quantization, server+context,
+  upstream commits, harness (qwen-coder 0.22.0), generation params (temp 0.7,
+  max_tokens 8192, 5 candidates), rendering (`head_tail`, 120k), pairwise
+  prompt/labels (G=20, A..T), criteria (specification/output/errors), granularity,
+  repetitions (1), ranker (round-robin Bradley-Terry), and the ablation list
+  (random / discrete / continuous / +optional frontier).
+
+### Checks
+
+- `frozen_main.yaml` loads: 25 tasks, 5 candidates, G=20 (A-T), 3 criteria, BT
+  ranking; experiment id `5d5889e9…`.
+- `git tag experiment-v1.0` created and pushed.
+
+### Commit / tag
+
+- Commit `730c282` (`frozen_main.yaml`); tag `experiment-v1.0` → `730c282`.
+
+### Next action
+
+Stage 17 — run the main study: 25 tasks x 5 candidates on the frozen `main-v1`
+pool, ranked by all local selectors (no ground truth) with G=20 verification.
