@@ -641,6 +641,23 @@ def test_resume_purges_stale_prompt_identities(
             None,
             malformed_attempts=2,
         )
+        for cid in (ca, cb):
+            scoped.record_expected_score(cid, "specification", 4.0, 0.75, 1)
+            scoped.record_evaluation(
+                cid,
+                4.0,
+                0.75,
+                "specification,output",
+                2,
+            )
+        scoped.record_ranking(
+            "old-ranking",
+            "task_x",
+            "old-pool",
+            '{"method":"old"}',
+            '{"ranking":[]}',
+            "SUCCEEDED",
+        )
 
     calls: list[dict[str, object]] = []
 
@@ -659,3 +676,6 @@ def test_resume_purges_stale_prompt_identities(
         assert scoped.verification_status(old_failed_id) is None
         assert len(scoped.list_verifications()) == 2
         assert scoped.get_experiment_stage(judge.exp) == "VERIFIED"
+        assert scoped._conn.execute("SELECT COUNT(*) FROM expected_scores").fetchone()[0] == 0
+        assert scoped._conn.execute("SELECT COUNT(*) FROM evaluation").fetchone()[0] == 0
+        assert scoped._conn.execute("SELECT COUNT(*) FROM rankings").fetchone()[0] == 0

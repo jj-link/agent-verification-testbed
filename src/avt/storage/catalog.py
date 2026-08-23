@@ -516,12 +516,17 @@ class CatalogConnection:
     def remove_superseded_verifications(
         self, pair_id: str, current_verification_ids: set[str]
     ) -> int:
-        """Remove catalog rows for older verifier identities on one pair.
+        """Remove stale identity rows and invalidate every derived task result.
 
         Verification artifacts remain content-addressed on disk. The catalog is
         the current experiment view consumed by coverage, expected-score, and
         ranking stages, so it must not mix prompt/model/output-policy identities.
+        All deletes commit atomically.
         """
+        pair = self._conn.execute(
+            "SELECT experiment_id, task_id FROM pairs WHERE pair_id=?",
+            (pair_id,),
+        ).fetchone()
         if not current_verification_ids:
             cur = self._conn.execute(
                 "DELETE FROM verifications WHERE pair_id=?",
@@ -535,6 +540,20 @@ class CatalogConnection:
                 f"AND verification_id NOT IN ({placeholders})",
                 params,
             )
+        if cur.rowcount and pair is not None:
+            experiment_id_, task_id = str(pair[0]), str(pair[1])
+            candidate_subquery = (
+                "SELECT candidate_id FROM candidates WHERE experiment_id=? AND task_id=?"
+            )
+            self._conn.execute(
+                f"DELETE FROM expected_scores WHERE candidate_id IN ({candidate_subquery})",
+                (experiment_id_, task_id),
+            )
+            self._conn.execute(
+                f"DELETE FROM evaluation WHERE candidate_id IN ({candidate_subquery})",
+                (experiment_id_, task_id),
+            )
+            self._conn.execute("DELETE FROM rankings WHERE task_id=?", (task_id,))
         self._conn.commit()
         return cur.rowcount
 
