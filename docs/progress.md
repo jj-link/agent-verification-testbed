@@ -1049,9 +1049,14 @@ and are not reused.
 - Six prior graded smoke trajectories completed within 53 tool calls and 407
   seconds. The corrected freeze uses evidence-based margins:
   `timeout_multiplier: 1.0`, Qwen `maxWallTimeSeconds: 900`,
-  `maxToolCalls: 64`, and `skipLoopDetection: false`. Plan §7 requires one
-  GPU-bound model workload initially, so the corrected freeze also sets
-  `max_parallel: 1`; this is the concurrency exercised by the bounded WSL smoke.
+  `maxToolCalls: 64`, and `skipLoopDetection: false`.
+- The one-worker freeze was re-examined before the main run: all actors share
+  the single Qwen SGLang server, and continuous batching scales aggregate
+  throughput near-linearly with concurrent actors until the GPU saturates.
+  `experiment-v1.1` therefore re-freezes the main study at `max_parallel: 4`,
+  the concurrency ceiling of the single GPU. Changing this infrastructure
+  setting changed the experiment identity (§26), so it is a new freeze with a
+  new tag rather than a repoint of `experiment-v1.0`.
 - A second smoke exposed DrvFS `EIO` while Harbor collected artifacts under
   `/mnt/c`; its automatic retry was stopped and no task container was left.
   Moving storage to native ext4 resolved it.
@@ -1067,13 +1072,15 @@ and are not reused.
   no exception, 206,489 input tokens, and 1,072 output tokens. Catalog:
   1 `SUCCEEDED` candidate, 1 `SUCCEEDED` job.
 - Model doctor: endpoint/model identity/logprobs/G=5 single-token labels all PASS.
-- Corrected `main-v1`: 25 tasks x 5 candidates, G=5, one local worker,
-  WSL-native storage, experiment id `08802b07cba9e1cbd9fb0b5220cf46bf`.
+- Corrected `main-v1` (`experiment-v1.1`): 25 tasks x 5 candidates, G=5,
+  four concurrent workers (single GPU), WSL-native storage, experiment id
+  `945140192175d4775e1997f80192a3e6`.
 - Full WSL gate: **88 tests passed**; ruff check/format and mypy clean.
 
 ### Commit / next action
 
-- Implementation commit: `974a316`.
-- Repoint `experiment-v1.0`, then generate the fresh 125-candidate main pool from
-  `/home/workbench/avt-data/main-v1/`; do not resume the superseded 60-candidate
-  Windows/old-config pool.
+- Commits: `974a316` (single-worker freeze), `8d26942` (four-worker freeze).
+  Tags: `experiment-v1.0` -> max_parallel=1; `experiment-v1.1` -> max_parallel=4.
+- Generate the fresh 125-candidate main pool from `/home/workbench/avt-data/main-v1/`
+  under `experiment-v1.1` (`945140192175d4775e1997f80192a3e6`); the 15 candidates
+  produced by the superseded max_parallel=1 identity were archived, not reused.
