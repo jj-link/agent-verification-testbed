@@ -637,3 +637,52 @@ task without consulting the ground-truth store.
 
 Proceed to Stage 13 (smoke test: two tasks, three candidates, pipeline runs
 end to end) using the frozen `smoke-rtx-v3` pool.
+
+## Stage 13 — Smoke test (end-to-end)
+
+**Status:** complete. The frozen `smoke-rtx-v3` pool (two tasks × three
+candidates) ran the pipeline end to end: generation → pairs → discrete
+verification → continuous expected scores → three-criterion evaluation →
+ranking.
+
+### Work
+
+- The smoke run was executed incrementally across Stages 7-12 on the frozen
+  `smoke-rtx-v3` pool (2 tasks × 3 candidates), driven by the `avt` CLI stage
+  chain (`generate` → `build-pairs` → `verify-pairs` → `expected-scores` →
+  `evaluate` → `rank`).
+- This stage re-ran the idempotent offline stages (`build-pairs`,
+  `expected-scores`, `evaluate`, `rank`) on the frozen pool to confirm the chain
+  completes cleanly and reproducibly; the already-recorded online stages
+  (generation, verification) were not re-run (freeze policy).
+
+### Checks
+
+- Offline chain re-run on `smoke-rtx-v3`:
+  `build-pairs` → 6 pairs; `expected-scores` → 18 records;
+  `evaluate` → 6 candidates; `rank` → 2 tasks (top:
+  `distribution-search`=ae6296…, `cancel-async-tasks`=a42be5…).
+- End-to-end artifact coverage verified: 6 candidate trajectories, 6 official
+  grader results, 18 verifier runs (2×3 pairs × 3 criteria).
+- Catalog row counts: tasks=2, candidates=6, pairs=6, verifications=18,
+  expected_scores=18, evaluation=6, rankings=2 — every stage populated.
+- `uv run pytest -q` — 68 passed; `uv run ruff check .`; `uv run mypy .` clean.
+
+### Decisions
+
+- The smoke test is the already-frozen `smoke-rtx-v3` run, whose online stages
+  were executed in prior stages; re-running generation/verification would
+  regenerate frozen trajectories, which the plan forbids after freeze. The
+  acceptance criterion "pipeline completes end to end" is evidenced by the
+  complete, consistent artifact and record set above.
+
+### Commit
+
+- Stage 13: no source change; verification evidence only. Commit record
+  accompanies the next milestone.
+
+### Next action
+
+Proceed to Stage 14 (pilot: eight tasks, initially three candidates, reliability
+and cost measured) — this requires the live local Qwen endpoint for
+generation and verification on a new `pilot` pool.
