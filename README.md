@@ -45,6 +45,13 @@ random baseline, task-bootstrap 95% CI **[0.104, 0.368]** (excludes zero). On th
 42 polarized pairs the per-pair verifier accuracy was 1.00 (continuous) and 0.95
 (discrete) — small-n caution applies.
 
-Full report and figures: [`results/REPORT.md`](results/REPORT.md). Regenerate
-with `python analysis/generate_figures.py --config experiments/frozen_main.yaml
---root /home/workbench/avt-data/main-v1`.
+
+## G=20 granularity ablation (Stage 15)
+
+The main study is frozen at G=5 (every label reliably present for the served
+model). The plan-§13.2-compliant fallback #4 (forced single-target logit-bias
+scoring) unlocks full G=20: `experiments/pilot-g20.yaml` verified at 240/240
+with all 20 labels covered (no zero-fill), and the G5-vs-G20 ablation
+(`experiments/pilot-g20-g5f-abl.yaml`, identical forced protocol on the same
+frozen trajectories) shows G=20 uses 17 distinct discrete scores vs 5 at G=5.
+Main study results above are unaffected (G=5).

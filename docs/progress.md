@@ -1186,7 +1186,95 @@ Stage 18 remains deliberately not implemented (permitted blocker below).
 - Milestone commit: `b581d85`.
 - Gate: ruff check/format clean (incl. `analysis/`), mypy clean, **91 tests
   passed**, figures visually verified via browser render.
-- Completed: Stages 1-14, 16, 17, 19. Blocked/deferred: Stage 15 (G=20
+
+## Stage 15 — G=20 forced-token pilot and G5-vs-G20 ablation — completed
+
+**Status:** complete. G=20 scored via the plan §13.2 fallback #4 (forced-token
+single-target calls) with full label coverage, plus an unconfounded G5-vs-G20
+granularity ablation running both granularities through the identical forced
+protocol on the same frozen eight-task × five-candidate trajectories.
+
+### Why a forced scorer (plan §13.2, earlier G=20 failure)
+
+- At G=20 the served model does not reliably surface all 20 letters in the
+  natural top-logprobs (e.g. `Q` ≈ −200 logprob), so unscored G=20 would
+  silently zero-fill missing labels — forbidden by §13.2. The earlier pilot-g20
+  run (unscored, natural 2-token) was therefore plan-noncompliant and replaced.
+- Implemented `_verify_pair_forced` (`verification.py`): two separate
+  single-target calls, one per trajectory, identical full-pair context, with a
+  uniform `logit_bias` (+100) across all G label token IDs so every label is
+  present in the returned top-k. Uniform bias preserves relative probability
+  (constant cancels in softmax). `max_tokens:1`, `top_logprobs = G`.
+- Validated tokenizer mapping: each uppercase letter is one token with id
+  `ord(ch)-33` (A=32 … T=51).
+
+### Gotchas fixed along the way
+
+- `ContinuousVerifier` used the A–E `SCORE_LABELS` default even at G=20, then
+  normalized by (G−1)=19; any mass on labels F–T was silently dropped. It now
+  passes `labels_for_granularity(self._G)` through. Regression test puts all
+  mass on T and asserts raw=20, normalized=1.
+- Added an explicit `verifier.forced_token_scoring` flag. It defaults off and is
+  not required for G>5 (G>5 always forces), but it lets a **G=5** run use the
+  identical forced single-target protocol — essential so the granularity
+  ablation is not confounded by the call protocol (G5 natural-joint vs G20
+  forced-single-target would differ in prompt, call count, and scoring).
+
+### G=20 pilot (frozen pool, `experiments/pilot-g20.yaml`)
+
+- 240/240 verifications SUCCEEDED, stage VERIFIED (80 pairs × 3 criteria).
+- Coverage: all 480 content positions returned exactly the 20 configured labels;
+  zero missing-label and zero outside-label tokens — every configured label
+  seen 480×. No silent zero-fill.
+- Discrete and continuous rankings both computed on the identical pool.
+
+### G5-vs-G20 granularity ablation (`experiments/pilot-g20-g5f-abl.yaml`)
+
+- Cloned the identical saved trajectories (8 tasks × 5 candidates, 80 pairs)
+  under a G=5 + `forced_token_scoring: true` experiment; same A/B prompts,
+  same forced single-target protocol, only the label count differs.
+- G5-forced verification: 240/240 SUCCEEDED, stage VERIFIED.
+
+Scoring distribution (480 discrete draws each; expected over 120 records):
+
+| Metric | G=5 | G=20 |
+|---|---|---|
+| Discrete mean | 3.76 | 13.07 |
+| Discrete std | 1.39 | 6.84 |
+| Discrete unique labels used | 5 | 17 |
+| Malformed/out-of-set draws | 0 | 0 |
+| Expected-score mean (normalized) | 0.628 | 0.556 |
+| Expected-score std | 0.203 | 0.204 |
+
+Top-pick agreement between G=5 and G=20 (per task, identical trajectories):
+
+| Selector | G5 top == G20 top |
+|---|---:|
+| discrete | 5/8 |
+| continuous | 4/8 |
+| G5 discrete==continuous | 3/8 |
+| G20 discrete==continuous | 4/8 |
+
+Finding: G=20 yields dramatically finer score granularity (17 vs 5 distinct
+discrete values, std 6.84 vs 1.39) without any out-of-set draws, but the
+coarser G=5 still selects the same top candidate as G=20 on the majority of
+tasks (5/8 discrete, 4/8 continuous). The main study remains frozen at G=5
+(the plan-compliant verified granularity); G=20 is now a reproducible,
+plan-compliant ablation with full coverage.
+
+### Checks
+
+- `uv run pytest -q` — **95 passed**; ruff check/format and mypy clean (both
+  Windows venv and the WSL `avt-venv` gate).
+- Forced-token request shape asserted: `top_logprobs == G`, `logit_bias` keys =
+  the G token ids, `max_tokens == 1`, one call per target.
+- `forced_token_scoring: true` at G=5 → forced identity; `false` at G=20 →
+  STILL forced (G>5 required), regression-tested.
+
+### Commits
+
+- Scorer, explicit forced mode, continuous-verifier G20 labels, tests, and this
+  progress note (docs commit follows).
   requires a plan-compliant forced-token scorer, §13.2 — main re-frozen at G=5)
   and Stage 18 (paid-API auth + spend cap not configured). G=20 remains a
   documented ablation (plan §26.10); G=5 is the plan-compliant main granularity.

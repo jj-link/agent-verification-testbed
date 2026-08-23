@@ -26,15 +26,12 @@ from pathlib import Path
 from typing import Any
 
 from avt.config import Config
-from avt.doctor import G5_LABELS
 from avt.selection import read_task_names
 from avt.storage.catalog import Catalog
 from avt.storage.ids import experiment_id
-from avt.verification import expected_scores_from_logprobs
+from avt.verification import expected_scores_from_logprobs, labels_for_granularity
 
 __all__ = ["ContinuousVerifier", "CoverageError", "ExpectedScore"]
-
-_G = len(G5_LABELS)  # 5
 
 
 @dataclass(frozen=True)
@@ -63,6 +60,7 @@ class ContinuousVerifier:
         self.catalog = Catalog(Path(config.storage.metadata_db))
         self.exp = experiment_id(config.raw)
         self._G = int(config.verifier.granularity)
+        self._labels = labels_for_granularity(self._G)
 
     def _candidate_tasks(self) -> tuple[dict[str, str], dict[str, int]]:
         """Map candidate_id -> task_id and pool size per task."""
@@ -90,7 +88,9 @@ class ContinuousVerifier:
                 )
             try:
                 response = json.loads(Path(str(response_path)).read_text(encoding="utf-8"))
-                raw_a, raw_b = expected_scores_from_logprobs(_content_logprobs(response))
+                raw_a, raw_b = expected_scores_from_logprobs(
+                    _content_logprobs(response), self._labels
+                )
             except Exception as exc:
                 raise CoverageError(
                     f"verification {vr.get('verification_id')}: unusable response ({exc})"

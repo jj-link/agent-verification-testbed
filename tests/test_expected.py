@@ -163,6 +163,36 @@ def test_renormalizes_label_mass(tmp_path: Path) -> None:
     assert abs(by.raw_expected_score - expected) < 1e-6
 
 
+def test_g20_uses_all_labels_in_expectation(tmp_path: Path) -> None:
+    """G>5 expectation must use the granularity labels, not the A-E default.
+
+    Regression: the verifier previously computed expected scores with the
+    default SCORE_LABELS (A-E) even at G=20, then normalized by (G-1)=19, so
+    probability mass on any label above E was silently dropped. This test puts
+    all mass on T (the 20th label) and asserts the full G=20 math.
+    """
+    cfg = CONFIG_YAML.replace("granularity: 5", "granularity: 20")
+    (tmp_path / "tasks.txt").write_text("task_x\n", encoding="utf-8")
+    cfg = cfg.replace("__TASKFILE__", (tmp_path / "tasks.txt").as_posix())
+    cfg = cfg.replace("__ROOT__", (tmp_path / "avt").as_posix())
+    cfg_path = tmp_path / "g20.yaml"
+    cfg_path.write_text(cfg.replace("__N__", "2"), encoding="utf-8")
+    verifier = ContinuousVerifier(load_config(cfg_path), tmp_path)
+    scratch = tmp_path / "responses"
+    scratch.mkdir(parents=True)
+    ca, cb = _seed_and_pairs(verifier, scratch, 2)
+    pid = pair_id(verifier.exp, "task_x", (ca, cb))
+    with verifier.catalog.connect() as sc:
+        sc.record_pair(pid, verifier.exp, "task_x", ca, cb, "PAIRED")
+    pa = {chr(ord("A") + i): 0.0 for i in range(20)}
+    pa["T"] = 1.0
+    _add_verification(verifier, scratch, pid, ca, cb, pa, pa, "g20")
+    by = {r.candidate_id: r for r in verifier.compute()}
+    # All mass on T (value 20): raw = 20.0, normalized = (20-1)/(20-1) = 1.0.
+    assert abs(by[ca].raw_expected_score - 20.0) < 1e-6
+    assert abs(by[ca].normalized_score - 1.0) < 1e-6
+
+
 def test_incomplete_coverage_raises(tmp_path: Path) -> None:
     verifier = _make(tmp_path, n=3)
     scratch = tmp_path / "responses"

@@ -70,6 +70,7 @@ class Verifier:
     max_tokens: int = 16
     top_logprobs: int = 300
     prompt_version: str = "score-label-map-v2"
+    forced_token_scoring: bool = False
 
 
 @dataclass(frozen=True)
@@ -177,6 +178,9 @@ def load_config(path: str | Path) -> Config:
             prompt_version=_str(ver, "prompt_version")
             if "prompt_version" in ver
             else "score-label-map-v2",
+            forced_token_scoring=_bool(ver, "forced_token_scoring")
+            if "forced_token_scoring" in ver
+            else False,
         ),
         storage=Storage(
             root=_str(sto, "root"),

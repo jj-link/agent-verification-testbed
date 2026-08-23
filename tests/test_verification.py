@@ -582,6 +582,26 @@ def test_scores_from_logprobs_granularity_20() -> None:
     assert scores_from_logprobs(content, labels) == (10, 19)
 
 
+def test_forced_mode_is_explicit_at_g5_and_required_above_g5(tmp_path: Path) -> None:
+    (tmp_path / "tasks.txt").write_text("task_x\n", encoding="utf-8")
+    base = CONFIG_YAML.replace("__TASKFILE__", (tmp_path / "tasks.txt").as_posix())
+
+    g5 = base.replace("repetitions: 1", "repetitions: 1\n  forced_token_scoring: true")
+    g5 = g5.replace("__ROOT__", (tmp_path / "g5").as_posix())
+    g5_path = tmp_path / "g5.yaml"
+    g5_path.write_text(g5, encoding="utf-8")
+    g5_judge = DiscreteJudge(load_config(g5_path), tmp_path)
+    assert g5_judge._forced_tokens is True
+    assert g5_judge._verifier_identity()["scoring"] == "forced_token_single_target"
+
+    g20 = base.replace("granularity: 5", "granularity: 20")
+    g20 = g20.replace("repetitions: 1", "repetitions: 1\n  forced_token_scoring: false")
+    g20 = g20.replace("__ROOT__", (tmp_path / "g20").as_posix())
+    g20_path = tmp_path / "g20.yaml"
+    g20_path.write_text(g20, encoding="utf-8")
+    assert DiscreteJudge(load_config(g20_path), tmp_path)._forced_tokens is True
+
+
 def test_judge_uses_granularity_labels(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     yaml = CONFIG_YAML.replace("granularity: 5", "granularity: 20")
     (tmp_path / "tasks.txt").write_text("task_x\n", encoding="utf-8")
@@ -601,16 +621,105 @@ def test_judge_uses_granularity_labels(tmp_path: Path, monkeypatch: pytest.Monke
 
     def fake_post(url: str, payload: dict[str, object], timeout: int = 120) -> dict[str, object]:
         labels = judge._labels
-        content = [
-            {"token": "K", "top_logprobs": _top20("K", labels)},
-            {"token": "P", "top_logprobs": _top20("P", labels)},
-        ]
+        assert payload["top_logprobs"] == 20
+        assert set(payload["logit_bias"].keys()) == {str(ord(c) - 33) for c in labels}
+        assert payload["max_tokens"] == 1
+        user = payload["messages"][-1]["content"]
+        dominant = "P" if "Score ONLY TRAJECTORY B" in user else "K"
+        content = [{"token": dominant, "top_logprobs": _top20(dominant, labels)}]
         return {"choices": [{"logprobs": {"content": content}}]}
 
     monkeypatch.setattr(V, "_post_json", fake_post)
     ps = judge._verify_pair(pair, "task_x", "output", 0)
     assert ps.score_a == 11 and ps.score_b == 16  # K=11, P=16
-    assert judge._verifier_identity()["granularity"] == 20
+    identity = judge._verifier_identity()
+    assert identity["granularity"] == 20
+    assert identity["scoring"] == "forced_token_single_target"
+    assert identity["forced_label_token_ids"] == sorted(ord(c) - 33 for c in judge._labels)
+    assert identity["forced_bias"] == 100.0
+    assert identity["single_target_prompt_version"] == "single-target-v1"
+
+
+def test_forced_g20_missing_label_fails_no_rows(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Plan 13.2: a single-target forced call omitting one score label must fail
+    visibly (MissingLabelError) and persist no verification rows."""
+    yaml = CONFIG_YAML.replace("granularity: 5", "granularity: 20")
+    (tmp_path / "tasks.txt").write_text("task_x\n", encoding="utf-8")
+    cfg = yaml.replace("__TASKFILE__", (tmp_path / "tasks.txt").as_posix()).replace(
+        "__ROOT__", (tmp_path / "avt3").as_posix()
+    )
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(cfg, encoding="utf-8")
+    judge = DiscreteJudge(load_config(cfg_path), tmp_path)
+
+    scratch = tmp_path / "scratch"
+    ca, cb = _seed_pair(judge, scratch)
+    pid = _single_pair(judge, scratch, ca, cb)
+    pair: dict[str, object] = {"pair_id": pid, "candidate_a": ca, "candidate_b": cb}
+    judge._body_for = lambda cid, task: f"BODY_{cid}"  # type: ignore[assignment]
+
+    def fake_post(url: str, payload: dict[str, object], timeout: int = 120) -> dict[str, object]:
+        labels = judge._labels
+        user = payload["messages"][-1]["content"]
+        if "Score ONLY TRAJECTORY B" in user:
+            # Omit the label Q (18th) from B's distribution: §13.2 forbids silent
+            # zero-fill, so the judge must fail visibly and record nothing.
+            dominant = "P"
+            items = [
+                {"token": lab, "logprob": -0.05 if lab == dominant else -2.0}
+                for lab in labels
+                if lab != "Q"
+            ]
+            return {
+                "choices": [{"logprobs": {"content": [{"token": dominant, "top_logprobs": items}]}}]
+            }
+        dominant = "K"
+        return {
+            "choices": [
+                {
+                    "logprobs": {
+                        "content": [{"token": dominant, "top_logprobs": _top20(dominant, labels)}]
+                    }
+                }
+            ]
+        }
+
+    monkeypatch.setattr(V, "_post_json", fake_post)
+    with pytest.raises(V.MissingLabelError):
+        judge._verify_pair(pair, "task_x", "output", 0)
+    with judge.catalog.connect() as scoped:
+        assert scoped._conn.execute("SELECT COUNT(*) FROM verifications").fetchone()[0] == 0
+
+
+def test_forced_g20_rejects_malformed_content_position(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    yaml = CONFIG_YAML.replace("granularity: 5", "granularity: 20")
+    (tmp_path / "tasks.txt").write_text("task_x\n", encoding="utf-8")
+    cfg = yaml.replace("__TASKFILE__", (tmp_path / "tasks.txt").as_posix()).replace(
+        "__ROOT__", (tmp_path / "avt3").as_posix()
+    )
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(cfg, encoding="utf-8")
+    judge = DiscreteJudge(load_config(cfg_path), tmp_path)
+
+    scratch = tmp_path / "scratch"
+    ca, cb = _seed_pair(judge, scratch)
+    pid = _single_pair(judge, scratch, ca, cb)
+    pair: dict[str, object] = {"pair_id": pid, "candidate_a": ca, "candidate_b": cb}
+    judge._body_for = lambda cid, task: f"BODY_{cid}"  # type: ignore[assignment]
+
+    monkeypatch.setattr(
+        V,
+        "_post_json",
+        lambda url, payload, timeout=120: {
+            "choices": [{"logprobs": {"content": ["not-a-logprob-position"]}}]
+        },
+    )
+    with pytest.raises(V.MissingLabelError, match="no valid content position"):
+        judge._verify_pair(pair, "task_x", "output", 0)
+    with judge.catalog.connect() as scoped:
+        assert scoped._conn.execute("SELECT COUNT(*) FROM verifications").fetchone()[0] == 0
 
 
 def test_resume_purges_stale_prompt_identities(

@@ -33,6 +33,7 @@ __all__ = [
     "MissingLabelError",
     "SCORE_LABELS",
     "build_messages",
+    "build_single_messages",
     "labels_for_granularity",
     "normalize_endpoint",
     "scores_from_logprobs",
@@ -63,6 +64,7 @@ CRITERIA: dict[str, str] = {
 }
 
 _PROMPT_VERSION = "score-label-map-v2"
+_SINGLE_TARGET_PROMPT_VERSION = "single-target-v1"
 
 
 def _score_mapping(labels: tuple[str, ...]) -> str:
@@ -133,6 +135,45 @@ def build_messages(
         "letter scores trajectory A; the second scores trajectory B. "
         f"Valid letters are {label_str}, with this exact mapping: "
         f"{_score_mapping(labels)}. Any other letter is invalid. No other text."
+    )
+    return [
+        {"role": "system", "content": _domain_instruction(labels)},
+        {"role": "user", "content": user_msg},
+    ]
+
+
+def build_single_messages(
+    task_description: str,
+    trajectory_a: str,
+    trajectory_b: str,
+    criterion: str,
+    target: str,
+    labels: tuple[str, ...] = SCORE_LABELS,
+    prompt_version: str = _SINGLE_TARGET_PROMPT_VERSION,
+) -> list[dict[str, str]]:
+    """Single-trajectory scoring prompt (forced-token G>5 path).
+
+    Both trajectories are included so the pair context is identical to the
+    two-token path; only the score target differs. The model is asked for ONE
+    score letter, so the single forced score token is conditioned on a clean
+    ``...TRAJECTORY X`` context rather than on a glued two-letter continuation
+    with a suppressed separator (plan 13.2 fallback #4).
+    """
+    if criterion not in CRITERIA:
+        raise ValueError(f"unknown criterion: {criterion!r}")
+    if prompt_version != _SINGLE_TARGET_PROMPT_VERSION:
+        raise ValueError(f"unknown single-target prompt version: {prompt_version!r}")
+    if target not in ("A", "B"):
+        raise ValueError(f"single-target must be 'A' or 'B', got {target!r}")
+    label_str = "{" + ",".join(labels) + "}"
+    user_msg = (
+        f"{CRITERIA[criterion]}\n\n"
+        f"TASK:\n{task_description}\n\n"
+        f"TRAJECTORY A:\n{trajectory_a}\n\n"
+        f"TRAJECTORY B:\n{trajectory_b}\n\n"
+        f"Score ONLY TRAJECTORY {target}. Output ONLY one score letter from "
+        f"{label_str}, using this exact mapping: {_score_mapping(labels)}. "
+        "Any other letter is invalid. No other text."
     )
     return [
         {"role": "system", "content": _domain_instruction(labels)},
@@ -270,6 +311,23 @@ class DiscreteJudge:
         self._prompt_version = str(
             getattr(config.verifier, "prompt_version", _PROMPT_VERSION) or _PROMPT_VERSION
         )
+        # Plan 13.2 fallback #4: forced-token scoring. At G>5 the endpoint does
+        # not reliably surface every score label in the natural top-logprobs, so
+        # we bias the single-token label logits to force them into the returned
+        # top-k. A uniform bias across all labels preserves relative probability
+        # (constant cancels in softmax) and guarantees every label is present.
+        # An explicit `forced_token_scoring` flag enables the same protocol at
+        # G=5, isolating granularity from call protocol in the G5-vs-G20
+        # ablation. It cannot disable the required G>5 fallback.
+        self._forced_tokens = int(config.verifier.granularity) > 5 or bool(
+            config.verifier.forced_token_scoring
+        )
+        self._forced_bias = 100.0
+        # Validated against the served tokenizer: /v1/tokenize maps each single
+        # uppercase letter to one token with id ord(ch)-33 (A=32 .. T=51).
+        self._label_token_ids = (
+            {ord(ch) - 33 for ch in self._labels} if self._forced_tokens else set()
+        )
 
     def _body_for(self, candidate_id_: str, task_id: str) -> str:
         with self.catalog.connect() as scoped:
@@ -293,6 +351,16 @@ class DiscreteJudge:
         return rendered.body_text
 
     def _verifier_identity(self) -> dict[str, object]:
+        forced = (
+            {
+                "scoring": "forced_token_single_target",
+                "forced_label_token_ids": sorted(self._label_token_ids),
+                "forced_bias": self._forced_bias,
+                "single_target_prompt_version": _SINGLE_TARGET_PROMPT_VERSION,
+            }
+            if self._forced_tokens
+            else {}
+        )
         return {
             "model": self.config.verifier.model,
             "endpoint": self.config.verifier.endpoint,
@@ -303,6 +371,7 @@ class DiscreteJudge:
             "max_tokens": self._max_tokens,
             "top_logprobs": self._top_logprobs,
             "prompt_version": self._prompt_version,
+            **forced,
         }
 
     def _persist(
@@ -400,6 +469,8 @@ class DiscreteJudge:
         criterion: str,
         repetition: int,
     ) -> PairScore:
+        if self._forced_tokens:
+            return self._verify_pair_forced(pair, task_id, criterion, repetition)
         ca = str(pair["candidate_a"])
         cb = str(pair["candidate_b"])
         disp_a, disp_b = display_order(ca, cb, self.config.experiment.seed)
@@ -482,6 +553,95 @@ class DiscreteJudge:
             score_a,
             score_b,
             malformed_count,
+        )
+
+    def _verify_pair_forced(
+        self,
+        pair: dict[str, object],
+        task_id: str,
+        criterion: str,
+        repetition: int,
+    ) -> PairScore:
+        """Forced-token G>5 scoring (plan 13.2 fallback #4).
+
+        Two separate single-token calls, one per trajectory, with identical
+        full-pair context and an explicit single-trajectory score target. A
+        uniform logit bias forces the G label tokens into the returned top-k at
+        that one position, so every configured label's probability is present
+        (no silent zero-fill). The two single-position distributions are
+        combined into one synthetic two-position response so all downstream
+        scoring (discrete + continuous) is unchanged.
+        """
+        ca = str(pair["candidate_a"])
+        cb = str(pair["candidate_b"])
+        disp_a, disp_b = display_order(ca, cb, self.config.experiment.seed)
+        with self.catalog.connect() as scoped:
+            task_description = scoped.get_task_instruction(self.exp, task_id) or ""
+        body_a = self._body_for(disp_a, task_id)
+        body_b = self._body_for(disp_b, task_id)
+
+        contents: dict[str, dict[str, Any]] = {}
+        raw_calls: dict[str, object] = {}
+        payloads: dict[str, object] = {}
+        for target in ("A", "B"):
+            messages = build_single_messages(
+                task_description,
+                body_a,
+                body_b,
+                criterion,
+                target,
+                self._labels,
+                _SINGLE_TARGET_PROMPT_VERSION,
+            )
+            payload: dict[str, object] = {
+                "model": self.config.verifier.model,
+                "messages": messages,
+                "max_tokens": 1,
+                "logprobs": True,
+                "top_logprobs": len(self._labels),
+                "logit_bias": {str(tok): self._forced_bias for tok in self._label_token_ids},
+                "chat_template_kwargs": {"enable_thinking": False},
+            }
+            payloads[target] = payload
+            raw = _post_json(f"{self.endpoint}/chat/completions", payload)
+            raw_calls[target] = raw
+            choices = raw.get("choices") or [{}]
+            lp = (choices[0].get("logprobs") or {}) if isinstance(choices[0], dict) else {}
+            content = list(lp.get("content") or [])
+            first = content[0] if content else None
+            if not isinstance(first, dict):
+                raise MissingLabelError(
+                    f"forced single-token call (criterion {criterion}, {target}) "
+                    "had no valid content position"
+                )
+            contents[target] = first
+
+        synthetic_content: list[dict[str, Any]] = [contents["A"], contents["B"]]
+        # Discrete plan-13.3 scores from the two single-position distributions.
+        score_a, score_b = scores_from_logprobs(synthetic_content, self._labels)
+        combined_response: dict[str, object] = {
+            "forced_token_scoring": True,
+            "granularity": len(self._labels),
+            "calls": raw_calls,
+            "choices": [{"logprobs": {"content": synthetic_content}}],
+        }
+        request_artifact: dict[str, object] = {
+            "forced_token_scoring": True,
+            "granularity": len(self._labels),
+            "calls": payloads,
+        }
+        return self._persist(
+            str(pair["pair_id"]),
+            task_id,
+            criterion,
+            repetition,
+            disp_a,
+            disp_b,
+            request_artifact,
+            combined_response,
+            score_a,
+            score_b,
+            0,
         )
 
     def verify_all(self) -> list[PairScore]:
