@@ -64,6 +64,7 @@ class Verifier:
     criteria: tuple[str, ...]
     granularity: int
     repetitions: int
+    max_tokens: int = 16
 
 
 @dataclass(frozen=True)
@@ -153,6 +154,7 @@ def load_config(path: str | Path) -> Config:
             criteria=_str_list(ver, "criteria"),
             granularity=_int(ver, "granularity"),
             repetitions=_int(ver, "repetitions"),
+            max_tokens=_int(ver, "max_tokens") if "max_tokens" in ver else 16,
         ),
         storage=Storage(
             root=_str(sto, "root"),

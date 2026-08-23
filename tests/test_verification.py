@@ -476,3 +476,40 @@ def test_verify_all_does_not_claim_verified_with_preexisting_failed(
         # A pre-existing FAILED still blocks the VERIFIED claim even after resume.
         assert scoped.get_experiment_stage(judge.exp) == "VERIFYING"
         assert scoped.count_failed_verifications(judge.exp) == 1
+
+
+def test_verifier_max_tokens_configurable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The discrete judge reads max_tokens from config and freezes it in the
+    verifier identity, so changing it yields a distinct reproducible run."""
+    role_yaml = CONFIG_YAML.replace(
+        "\n  granularity: 5\n", "\n  granularity: 5\n  max_tokens: 64\n"
+    )
+    (tmp_path / "tasks.txt").write_text("task_x\n", encoding="utf-8")
+    cfg = role_yaml.replace("__TASKFILE__", (tmp_path / "tasks.txt").as_posix()).replace(
+        "__ROOT__", (tmp_path / "avt2").as_posix()
+    )
+    cfg_path = tmp_path / "cfg.yaml"
+    cfg_path.write_text(cfg, encoding="utf-8")
+    judge = DiscreteJudge(load_config(cfg_path), tmp_path)
+    assert judge._max_tokens == 64
+
+    scratch = tmp_path / "scratch"
+    ca, cb = _seed_pair(judge, scratch)
+    pid = _single_pair(judge, scratch, ca, cb)
+    pair: dict[str, object] = {"pair_id": pid, "candidate_a": ca, "candidate_b": cb}
+    judge._body_for = lambda cid, task: f"BODY_{cid}"  # type: ignore[assignment]
+
+    seen: list[dict[str, object]] = []
+
+    def fake_post(url: str, payload: dict[str, object], timeout: int = 120) -> dict[str, object]:
+        seen.append(payload)
+        assert payload["max_tokens"] == 64
+        return _response("C", "B")
+
+    monkeypatch.setattr(V, "_post_json", fake_post)
+    ps = judge._verify_pair(pair, "task_x", "output", 0)
+    assert seen
+    # identity includes the frozen max_tokens
+    assert "max_tokens" in judge._verifier_identity()
+    assert judge._verifier_identity()["max_tokens"] == 64
+    assert ps.status == "SUCCEEDED"

@@ -219,6 +219,7 @@ class DiscreteJudge:
         self.artifacts = ArtifactStore(Path(config.storage.root))
         self.exp = experiment_id(config.raw)
         self.endpoint = normalize_endpoint(config.verifier.endpoint).rstrip("/")
+        self._max_tokens = int(getattr(config.verifier, "max_tokens", 16) or 16)
 
     def _body_for(self, candidate_id_: str, task_id: str) -> str:
         with self.catalog.connect() as scoped:
@@ -249,6 +250,7 @@ class DiscreteJudge:
             "granularity": self.config.verifier.granularity,
             "repetitions": self.config.verifier.repetitions,
             "labels": list(SCORE_LABELS),
+            "max_tokens": self._max_tokens,
         }
 
     def _persist(
@@ -357,7 +359,7 @@ class DiscreteJudge:
         base_payload: dict[str, object] = {
             "model": self.config.verifier.model,
             "messages": messages,
-            "max_tokens": 16,
+            "max_tokens": self._max_tokens,
             "logprobs": True,
             "top_logprobs": _TOP_LOGPROBS,
             "chat_template_kwargs": {"enable_thinking": False},
