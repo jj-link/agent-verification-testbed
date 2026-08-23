@@ -1,0 +1,71 @@
+# FROZEN MAIN STUDY CONFIGURATION — v1.0 (do not modify after tagging)
+#
+# Every experimental decision is frozen here per plan §26. Changing any field
+# invalidates experiment-v1.0; create a new tag and rerun consistently.
+
+experiment:
+  name: main-v1
+  seed: 42
+  task_file: experiments/main_tasks.txt        # 25 tasks (smoke+pilot subset)
+  candidates_per_task: 5
+  max_parallel: 4
+
+upstream:
+  # Frozen upstream commits.
+  terminal_bench_commit: 69671fbaac6d67a7ef0dfec016cc38a64ef7a77c
+  harbor_commit: 4407eb5227a2ff4f0d3f16b2eb48849382fdf276
+
+generator:
+  # Local RTX 6000 Pro deployment (qwen3.8-27b-6000pro). host.docker.internal
+  # resolves for the in-container qwen-code actor.
+  harness: qwen-coder
+  model: qwen3.8-27b-6000pro
+  endpoint: http://host.docker.internal:8000/v1
+  temperature: 0.7
+  max_tokens: 8192
+  timeout_multiplier: 100000
+  context_window: 200000
+  agent_version: "0.22.0"
+
+verifier:
+  model: qwen3.8-27b-6000pro
+  endpoint: http://host.docker.internal:8000/v1
+  criteria:
+    - specification
+    - output
+    - errors
+  granularity: 20      # score labels = first 20 letters (A..T); G=20 primary
+  repetitions: 1
+  # top_logprobs uses the frozen code default (300) so the experiment id matches
+  # the generated pool; it is config-driven in the verifier identity.
+
+rendering:
+  max_pair_context_tokens: 120000
+  oversized_output_policy: head_tail
+
+ranking:
+  method: round_robin_bradley_terry
+  minimum_pair_coverage: 1.0
+
+storage:
+  root: .avt/main/
+  metadata_db: .avt/main/experiment.sqlite
+  ground_truth_db: .avt/main/ground_truth.sqlite
+
+# --- Frozen serving / model identity (plan §26.2-26.3) ---
+# Served model id.........: qwen3.8-27b-6000pro
+# Architecture............: Qwen3.5 (Qwen3_5ForConditionalGeneration)
+# Quantization............: modelopt 0.47.0.dev0 MIXED_PRECISION
+#                          attention/linear_attn -> FP8; MLP + lm_head -> NVFP4 gs16;
+#                          KV cache -> FP8
+# Base snapshot (HF)......: 52d1adc5f38aa5ebf099c29ed7025ba34cfbb854
+# Drafter snapshot........: 50307d4c4cde6860d4eee73e2547cd786fe8e8a4
+# Serving.................: SGLang (lmsysorg/sglang:qwen38-27b), port 8000
+# Context length..........: 262144 (native)
+#
+# --- Ablation list (plan §26.10) ---
+# Selectors compared on the same frozen pools (identical candidate IDs):
+#   1. random (deterministic seed 42 baseline)
+#   2. discrete (round-robin BT over discrete G=20 scores)
+#   3. continuous (round-robin BT over expected scores from G=20)
+#   4. (optional) frontier-assisted — Stage 18, frozen pools only
