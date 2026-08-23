@@ -1110,12 +1110,17 @@ Pool: 26/125 candidates pass (reward 1.0) = 20.8% base rate.
 
 | Selector | Top-pass rate | Mean selected-top reward |
 |---|---:|---:|
-| random | 5/25 (20.0%) | 0.200 |
+| random (realized seed-42 draw) | 5/25 (20.0%) | 0.200 |
+| random (uniform expectation) | 20.8% | 0.208 |
 | discrete | 11/25 (44.0%) | 0.440 |
 | continuous | 11/25 (44.0%) | 0.440 |
 
-Paired task-bootstrap (20k resamples, seed 42), mean selected-top reward:
-- continuous - random: **+0.240, 95% CI [0.080, 0.400]** (excludes 0; significant)
+Paired task-bootstrap (20k resamples, seed 42), mean selected-top reward. The
+random arm's uncertainty uses each task's expected random reward (`passing/5`)
+because a uniform random selector spans the pool; the 5/25 row above is the
+single realized seeded draw and is kept only as the observed realization:
+- continuous - expected-random: **+0.232, 95% CI [0.088, 0.384]** (excludes 0; significant)
+- discrete   - expected-random: **+0.232, 95% CI [0.088, 0.384]**
 - continuous - discrete: 0.000 (identical pass rate)
 
 Full §22/§19 analysis (token/latency medians, verifier accuracy, report) is the
