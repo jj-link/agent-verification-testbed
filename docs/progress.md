@@ -1133,11 +1133,10 @@ Stage 19 deliverable; this stage closes the run and the local-selector rankings.
 - Next: Stage 18 frontier-assisted ablation (optional, frozen pools only) or
   Stage 19 analyze/publish.
 
-## Stage 19 analyze/publish — in progress
+## Stage 19 analyze/publish — completed
 
-**Status:** analysis and report written; tests/lint/commit/tag/push not yet run
-for this stage. Stage 18 remains deliberately not implemented (permitted
-blocker below).
+**Status:** analysis, figures, report, README, and public release done.
+Stage 18 remains deliberately not implemented (permitted blocker below).
 
 ### Decisions and checks
 
