@@ -8,8 +8,9 @@ experiment:
   seed: 42
   task_file: experiments/main_tasks.txt        # 25 tasks (smoke+pilot subset)
   candidates_per_task: 5
-  # Plan §7 starts with one GPU-bound workload; the bounded WSL smoke validated it.
-  max_parallel: 1
+  # SGLang continuous batching scales aggregate throughput near-linearly with
+  # concurrent actors until the single GPU saturates (validated rationale).
+  max_parallel: 4
 
 upstream:
   # Frozen upstream commits.
