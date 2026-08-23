@@ -1,0 +1,78 @@
+# Stage 18 frontier-assisted verifier — EXAMPLE config (plan 24)
+#
+# NOT run this session: requires a paid frontier API key + explicit spend cap.
+# This file is a template; do not use until you set FRONTIER_API_KEY and confirm
+# the spend cap.
+#
+# IMPORTANT (experiment identity): adding a `frontier:` section changes
+# `experiment_id(config.raw)`, so this MUST be a separate experiment whose
+# candidates/pairs are cloned from the frozen main pool (same saved trajectory
+# artifacts). It must NEVER be added to frozen_main.yaml, or the frozen pool's
+# candidates/pairs would no longer be found under the original experiment id.
+#
+# Flow (plan 24): per frozen pair + criterion
+#   1. Ask the frontier model for comparative reasoning + coarse 1-10 scores.
+#   2. Save its raw response, token use, latency, and API cost.
+#   3. Give the frontier analysis + original pair to the local Qwen scorer.
+#   4. Extract Qwen's score-token distribution.
+#   5. Compute continuous expected scores (existing `expected-scores`).
+#   6. Rank with the same round-robin engine (`rank --selector continuous`).
+#
+# To run (after authorization): copy to pilot-g20-fa.yaml, regenerate the pool
+# by cloning from the frozen pool, then run:
+#   FRONTIER_API_KEY=<key> uv run avt build-pairs --config experiments/...
+#   FRONTIER_API_KEY=<key> uv run avt verify-pairs --config experiments/...
+
+experiment:
+  name: pilot-g20-fa
+  seed: 42
+  task_file: experiments/pilot_g20_tasks.txt
+  candidates_per_task: 5
+  max_parallel: 4
+
+upstream:
+  terminal_bench_commit: 69671fbaac6d67a7ef0dfec016cc38a64ef7a77c
+  harbor_commit: 4407eb5227a2ff4f0d3f16b2eb48849382fdf276
+
+generator:
+  harness: qwen-coder
+  model: qwen3.8-27b-6000pro
+  endpoint: http://host.docker.internal:8000/v1
+  temperature: 0.7
+  max_tokens: 8192
+  timeout_multiplier: 100000
+  context_window: 200000
+
+verifier:
+  model: qwen3.8-27b-6000pro
+  endpoint: http://host.docker.internal:8000/v1
+  criteria:
+    - specification
+    - output
+    - errors
+  granularity: 20
+  repetitions: 1
+
+# Frontier-assisted stage. Refuse ALL paid calls until FRONTIER_API_KEY is set
+# and this spend cap is confirmed. Raise this cap to an affordable ceiling.
+frontier:
+  model: gpt-4o-mini
+  endpoint: https://api.openai.com/v1
+  api_key_env: FRONTIER_API_KEY
+  spend_cap_usd: 10.0
+  pricing:
+    input_per_1k: 0.15
+    output_per_1k: 0.60
+
+rendering:
+  max_pair_context_tokens: 120000
+  oversized_output_policy: head_tail
+
+ranking:
+  method: round_robin_bradley_terry
+  minimum_pair_coverage: 1.0
+
+storage:
+  root: .avt/pilot-g20-fa/
+  metadata_db: .avt/pilot-g20-fa/experiment.sqlite
+  ground_truth_db: .avt/pilot-g20-fa/ground_truth.sqlite

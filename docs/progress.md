@@ -1273,6 +1273,61 @@ plan-compliant ablation with full coverage.
 
 ### Commits
 
-- Scorer, explicit forced mode, continuous-verifier G20 labels, tests, config,
-  README, and this progress note all in milestone `0b54298` (tag
-  `avt-v1.1.0`). Working tree clean.
+
+## Stage 18 — Frontier-assisted method (code implemented; run blocked)
+
+**Status:** code-only implementation complete and committed; the paid frontier
+run remains blocked (plan 24: "Require an explicit API spending cap before
+making paid calls", and goal rule 6: paid APIs stop for user input).
+
+### Implementation (plan 24, no paid calls made)
+
+- `src/avt/frontier.py`: `FrontierClient` with an authorization gate
+  (`authorized()`), a hard `SpendLedger`/`SpendCapExceeded` guard that reserves
+  the estimated cost BEFORE a call and settles with the billed usage, per-model
+  default pricing plus config `pricing`, and `FrontierAnalysis` capturing raw
+  response, prompt/completion tokens, latency, and USD cost (plan 24 step 2).
+- Two-stage judge path `_verify_pair_frontier` (`verification.py`):
+  1. Stage 1 (frontier): one comparative-reasoning + coarse 1-10 call per
+     (pair, criterion) via `build_frontier_messages`.
+  2. Stage 2 (local Qwen): `build_frontier_single_messages` conditions the
+     forced single-target scorer on the frontier analysis (placed as neutral
+     evidence), then combines the two single-position distributions into the
+     unchanged synthetic response so `expected-scores`/`rank` work as-is.
+- Frontier settings (model, prompt version, spend cap) are hashed into the
+  **verification identity** (`single-target-frontier-v1`, `scoring:
+  frontier_assisted_single_target`), so a frontier run is a distinct
+  verification and never collides with the plain local run.
+- Guardrail: with no `FRONTIER_API_KEY` / no positive `spend_cap_usd`, the judge
+  raises (never silently falls back to local-only scoring), so a misconfigured
+  frontier section cannot accidentally produce local-only results.
+- New `frontier:` optional `Config` section with `force`; `.env.example` gains a
+  `FRONTIER_API_KEY=` placeholder (unset by default). Example config
+  `experiments/pilot-g20-fa.example.yaml` documents the pool-clone requirement
+  (a `frontier:` section changes `experiment_id`, so it must never be added to
+  `frozen_main.yaml`; run on a cloned frozen pool).
+
+### Verification / gate
+
+- `uv run pytest -q` — **103 passed** (8 new frontier tests, mocked posts; no
+  network). ruff check/format clean; mypy clean (19 files).
+- Confirmed `FRONTIER_API_KEY` unset in the environment, so no paid call could
+  have been issued; all frontier tests inject a fake poster.
+- Tests cover: not-authorized raises without calling; unknown model without
+  pricing is not authorized; spend cap enforced before call (no call made);
+  analyze records tokens/latency/cost correctly; two-stage judge scores a pair
+  with exactly one frontier call + two local calls and persists cost; judge
+  refuses to run local calls when the frontier is not authorized.
+
+### Blocked (permitted blocker)
+
+- The actual frontier run on frozen pools is NOT executed: it requires a paid
+  frontier API key and an explicit spending cap from the user, which are not
+  configured. Enable by setting `FRONTIER_API_KEY` and confirming
+  `frontier.spend_cap_usd`, then clone the frozen pool and run
+  `build-pairs` -> `verify-pairs` -> `expected-scores` -> `rank` (plan 24 steps
+  3-6) on frozen pools only.
+
+### Commit
+
+- Stage 18 code + tests + example config + this note.

@@ -89,6 +89,7 @@ class Config:
     upstream: dict[str, object] = field(default_factory=dict)
     rendering: dict[str, object] = field(default_factory=dict)
     ranking: dict[str, object] = field(default_factory=dict)
+    frontier: dict[str, object] = field(default_factory=dict)
     raw: dict[str, object] = field(default_factory=dict)
 
 
@@ -190,5 +191,10 @@ def load_config(path: str | Path) -> Config:
         upstream=_section(raw, "upstream"),
         rendering=_section(raw, "rendering"),
         ranking=_section(raw, "ranking"),
+        frontier=(
+            dict(cast("dict[str, object]", raw["frontier"]))
+            if isinstance(raw.get("frontier"), dict)
+            else {}
+        ),
         raw=raw,
     )
