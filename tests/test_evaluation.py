@@ -92,3 +92,19 @@ def test_missing_criterion_raises(tmp_path: Path) -> None:
     _seed_with_scores(evaluator, {"specification": 3.0, "output": 2.0})  # no 'errors'
     with pytest.raises(EvaluationError):
         evaluator.evaluate()
+
+
+def test_granularity_drives_normalization() -> None:
+    """G=20 normalization divides by (G-1)=19, not the G=5 constant 4."""
+    yaml20 = CONFIG_YAML.replace("granularity: 5", "granularity: 20")
+    p = Path(".") / "_test_g20_cfg.yaml"
+    p.write_text(yaml20.replace("__TASKFILE__", "x.txt").replace("__ROOT__", "y"), encoding="utf-8")
+    try:
+        ev = Evaluator(load_config(p), p.parent)
+        assert ev._G == 20
+        # aggregate_raw 10 -> (10-1)/(20-1) = 9/19
+        with ev.catalog.connect() as sc:
+            sc.upsert_experiment_config(ev.exp, {}, "PAIRED")
+        assert abs((10.0 - 1.0) / 19.0 - (10.0 - 1.0) / (ev._G - 1.0)) < 1e-9
+    finally:
+        p.unlink(missing_ok=True)

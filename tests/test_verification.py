@@ -140,15 +140,15 @@ def test_scores_skip_separator_token() -> None:
     assert scores_from_logprobs(content) == (5, 1)
 
 
-def test_missing_subset_label_is_zero_probability() -> None:
-    # For G>5 the model concentrates mass on a subset of the scale; a label the
-    # endpoint did not surface has ~0 probability and is scored as 0, renormalized.
+def test_missing_label_is_configuration_failure() -> None:
+    # A score position omitting a configured label is a configuration failure
+    # (plan 13.2: never silently assign probability zero).
     content: list[dict[str, object]] = [
         {"token": "B", "top_logprobs": _top(False, "B")},  # omits "C"
         {"token": "B", "top_logprobs": _top(True, "B")},
     ]
-    # position 0: B dominant over {A,B,D,E}, C=0 -> discrete argmax is B (=2)
-    assert scores_from_logprobs(content) == (2, 2)
+    with pytest.raises(MissingLabelError):
+        scores_from_logprobs(content)
 
 
 def test_no_label_logprobs_is_configuration_failure() -> None:
@@ -274,7 +274,7 @@ def test_malformed_retries_once_with_reminder(
     assert len(calls) == 2  # exactly one malformed retry
     messages = cast(list[dict[str, str]], calls[1]["messages"])
     retry_user = messages[-1]["content"]
-    assert V._MALFORMED_REMINDER in retry_user
+    assert V._malformed_reminder(judge._labels) in retry_user
     with judge.catalog.connect() as scoped:
         row = scoped._conn.execute("SELECT malformed_attempts FROM verifications").fetchone()
     assert row[0] == 1

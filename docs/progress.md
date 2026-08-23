@@ -983,3 +983,45 @@ pool, ranked by all local selectors (no ground truth) with G=20 verification.
 ### Commits (prior stages)
 
 - Stages 14-16 fully committed and pushed; HEAD = `c101a1d` (tree clean).
+
+## Stage 15/16 correction — G=20 approach was not plan-compliant (§13.2)
+
+**Status:** corrected offline; plan-faithful. Requires server to re-run affected
+verification.
+
+### What was wrong
+
+Review flagged that the G=20 pipeline violated the frozen plan:
+1. **§13.2 violation:** I "fixed" missing rare G=20 labels (e.g. `Q`) by assigning
+   them probability 0 and renormalizing. Plan §13.2 explicitly forbids silently
+   assigning zero probability — missing score-token probabilities are a
+   configuration failure.
+2. **Wrong G in offline normalization:** `expected.py` / `evaluation.py`
+   hardcoded `_G = len(G5_LABELS) = 5`, so G=20 expected/evaluate scores were
+   normalized by (G-1)=4 instead of (G-1)=19.
+3. **Hardcoded retry reminder:** `_MALFORMED_REMINDER` said `{A,B,C,D,E}` even for
+   G=20.
+
+### Fix (offline, tests green: 84 passed, ruff/format/mypy clean)
+
+- `verification._label_probs` restored to strict plan §13.2 `MissingLabelError`
+  on any missing configured label (no silent zero).
+- `_malformed_reminder(labels)` is now label-dynamic (G=20 reminder uses A..T).
+- `expected.py` / `evaluation.py` normalize by `config.verifier.granularity`
+  (dynamic G), with a regression test asserting G=20 -> (raw-1)/19.
+
+### Consequence
+
+- The Stage-15 "pilot-g20 238/240" G=20 verification was produced with the §13.2
+  zero-fill and is **not valid** under the frozen plan; it must be purged and is
+  re-run only if a plan-compliant G=20 method (forced-token scoring) is added.
+- The main study is re-frozen at **G=5** (labels A..E), the granularity at which
+  §13.2 holds (all 5 labels reliably present, validated in Stage 14). G=20 remains
+  a documented ablation (plan §26.10) requiring forced-token scoring.
+- `experiments/frozen_main.yaml` updated to `granularity: 5`; `experiment-v1.0`
+  tag re-pointed to the corrected tree.
+
+### Blocker (unchanged)
+
+- Model server (port 8000) remains down / container removed; re-running the
+  (now G=5) main verification/generation requires restoring it.

@@ -62,7 +62,7 @@ class ContinuousVerifier:
         self.repo_root = repo_root
         self.catalog = Catalog(Path(config.storage.metadata_db))
         self.exp = experiment_id(config.raw)
-        self._G = len(G5_LABELS)
+        self._G = int(config.verifier.granularity)
 
     def _candidate_tasks(self) -> tuple[dict[str, str], dict[str, int]]:
         """Map candidate_id -> task_id and pool size per task."""

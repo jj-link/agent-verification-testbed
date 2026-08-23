@@ -59,6 +59,7 @@ class Evaluator:
         self.catalog = Catalog(Path(config.storage.metadata_db))
         self.exp = experiment_id(config.raw)
         self._criteria = tuple(self.config.verifier.criteria)
+        self._G = int(config.verifier.granularity)
 
     def _candidates(self) -> list[str]:
         ids: list[str] = []
@@ -81,7 +82,7 @@ class Evaluator:
                 raise EvaluationError(f"{candidate_id_}: missing criterion scores {missing}")
             n = len(self._criteria)
             raw = sum(by_criterion[c] for c in self._criteria) / n
-            norm = (raw - 1.0) / (_G - 1.0)
+            norm = (raw - 1.0) / (self._G - 1.0)
             observations = sum(_as_int(r.get("observations")) for r in expected)
             record = EvaluatedCandidate(candidate_id_, self._criteria, raw, norm, observations)
             results.append(record)

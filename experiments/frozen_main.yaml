@@ -34,7 +34,12 @@ verifier:
     - specification
     - output
     - errors
-  granularity: 20      # score labels = first 20 letters (A..T); G=20 primary
+  # G=5 (labels A..E). Plan 13.2 forbids silent zero-fill of a missing label, and
+  # this model does not reliably emit all 20 letters (G=20) in its top-logprobs,
+  # so G=5 is the granularity at which every label is reliably present and the
+  # verifier is plan-compliant. G=20 remains a documented ablation requiring
+  # forced-token scoring (plan 26 ablation list).
+  granularity: 5
   repetitions: 1
   # top_logprobs uses the frozen code default (300) so the experiment id matches
   # the generated pool; it is config-driven in the verifier identity.

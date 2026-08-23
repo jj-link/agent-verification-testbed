@@ -67,13 +67,19 @@ _DOMAIN_INSTRUCTION = (
     "the same software engineering task. Score each trajectory from 1 (poor) to "
     "5 (excellent) for the stated criterion. Higher is better."
 )
+
+
 # Plan 15: a malformed (unparsable) output is retried exactly once with this
 # strict format reminder appended to the user message.
-_MALFORMED_REMINDER = (
-    "\n\nYour previous response was not exactly two score letters. Output ONLY "
-    "two single letters from {A,B,C,D,E} separated by a space - the first scores "
-    "trajectory A, the second scores trajectory B. No other text, no explanation."
-)
+def _malformed_reminder(labels: tuple[str, ...]) -> str:
+    """Strict-format retry reminder scoped to the frozen score-label set."""
+    label_str = "{" + ",".join(labels) + "}"
+    return (
+        "\n\nYour previous response was not exactly two score letters. Output ONLY "
+        f"two single letters from {label_str} separated by a space - the first scores "
+        "trajectory A, the second scores trajectory B. No other text, no explanation."
+    )
+
 
 # host.docker.internal is a container-only alias; the judge runs host-side (AVT
 # orchestration on the workstation), so the model is reached on host loopback.
@@ -146,21 +152,18 @@ def _label_probs(
             lp = item.get("logprob")
             if isinstance(lp, (int, float)):
                 weights[label] = weights.get(label, 0.0) + math.exp(float(lp))
-    if not weights:
-        # No score-label logprob at all at this position -> genuine data absence
-        # (endpoint returned no labels). Plan 13.2: treat this as config failure.
-        raise MissingLabelError("endpoint returned no score-label logprobs at a position")
+    missing = [lab for lab in labels if lab not in weights]
+    if missing:
+        # Plan 13.2: missing score-token probabilities are a configuration
+        # failure; never silently assign probability zero. A label absent from
+        # the returned top-logprobs (e.g. a rare letter at G=20) is treated as
+        # missing data and fails visibly, per the frozen plan.
+        raise MissingLabelError(f"endpoint omitted logprob for labels {missing}")
     total = sum(weights.values())
     if not math.isfinite(total) or total <= 0.0:
         # Plan 13.4: p(score) must be a valid probability over the G labels.
         raise MissingLabelError(f"non-finite/zero label mass at a score position: {weights}")
-    # A label the model kept out of its returned top-logprobs has (near-)zero
-    # probability. For G>5 the model concentrates mass on a subset of the scale
-    # (e.g. a missing letter such as Q at -200 logprob), so requiring every label
-    # to appear would fail the pair though the missing label genuinely contributes
-    # ~0 to the expected score. Assign it probability 0 and renormalize; plan 13.2
-    # still fails clearly when no label appears at all (above).
-    return {label: weights.get(label, 0.0) / total for label in labels}
+    return {label: weight / total for label, weight in weights.items()}
 
 
 def _discrete(probs: dict[str, float], labels: tuple[str, ...]) -> int:
@@ -397,7 +400,9 @@ class DiscreteJudge:
         # strict format reminder; missing score-token probabilities are a
         # configuration failure and fail this job immediately (never retried).
         reminder_messages = [
-            dict(m, content=m["content"] + _MALFORMED_REMINDER) if m["role"] == "user" else m
+            dict(m, content=m["content"] + _malformed_reminder(self._labels))
+            if m["role"] == "user"
+            else m
             for m in messages
         ]
         score_a = score_b = 0
