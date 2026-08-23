@@ -62,11 +62,20 @@ CRITERIA: dict[str, str] = {
     "errors": "Does it avoid meaningful failure signals in logs and tool output?",
 }
 
-_DOMAIN_INSTRUCTION = (
-    "You are an expert reviewer evaluating two AI coding-agent trajectories for "
-    "the same software engineering task. Score each trajectory from 1 (poor) to "
-    "5 (excellent) for the stated criterion. Higher is better."
-)
+_PROMPT_VERSION = "score-label-map-v2"
+
+
+def _score_mapping(labels: tuple[str, ...]) -> str:
+    return ", ".join(f"{label}={value}" for value, label in enumerate(labels, start=1))
+
+
+def _domain_instruction(labels: tuple[str, ...]) -> str:
+    return (
+        "You are an expert reviewer evaluating two AI coding-agent trajectories for "
+        "the same software engineering task. Score each trajectory from 1 (poor) to "
+        f"{len(labels)} (excellent) for the stated criterion. Higher is better. "
+        f"Use this exact score-to-letter mapping: {_score_mapping(labels)}."
+    )
 
 
 # Plan 15: a malformed (unparsable) output is retried exactly once with this
@@ -75,9 +84,11 @@ def _malformed_reminder(labels: tuple[str, ...]) -> str:
     """Strict-format retry reminder scoped to the frozen score-label set."""
     label_str = "{" + ",".join(labels) + "}"
     return (
-        "\n\nYour previous response was not exactly two score letters. Output ONLY "
-        f"two single letters from {label_str} separated by a space - the first scores "
-        "trajectory A, the second scores trajectory B. No other text, no explanation."
+        "\n\nYour previous response was not exactly two valid score letters. Output "
+        "ONLY two single letters separated by one space: the first scores trajectory "
+        f"A and the second scores trajectory B. Valid letters are {label_str}, with "
+        f"this exact mapping: {_score_mapping(labels)}. Any other letter is invalid. "
+        "No other text or explanation."
     )
 
 
@@ -106,20 +117,25 @@ def build_messages(
     trajectory_b: str,
     criterion: str,
     labels: tuple[str, ...] = SCORE_LABELS,
+    prompt_version: str = _PROMPT_VERSION,
 ) -> list[dict[str, str]]:
     if criterion not in CRITERIA:
         raise ValueError(f"unknown criterion: {criterion!r}")
+    if prompt_version != _PROMPT_VERSION:
+        raise ValueError(f"unknown verifier prompt version: {prompt_version!r}")
+    label_str = "{" + ",".join(labels) + "}"
     user_msg = (
         f"{CRITERIA[criterion]}\n\n"
         f"TASK:\n{task_description}\n\n"
         f"TRAJECTORY A:\n{trajectory_a}\n\n"
         f"TRAJECTORY B:\n{trajectory_b}\n\n"
-        f"Output ONLY: <A> <B>, where <A> is a single letter from "
-        f"{{{','.join(labels)}}} scoring trajectory A and <B> a single letter "
-        f"from {{{','.join(labels)}}} scoring trajectory B. No other text."
+        "Output ONLY two single score letters separated by one space. The first "
+        "letter scores trajectory A; the second scores trajectory B. "
+        f"Valid letters are {label_str}, with this exact mapping: "
+        f"{_score_mapping(labels)}. Any other letter is invalid. No other text."
     )
     return [
-        {"role": "system", "content": _DOMAIN_INSTRUCTION},
+        {"role": "system", "content": _domain_instruction(labels)},
         {"role": "user", "content": user_msg},
     ]
 
@@ -251,6 +267,9 @@ class DiscreteJudge:
         self._max_tokens = int(getattr(config.verifier, "max_tokens", 16) or 16)
         self._top_logprobs = int(getattr(config.verifier, "top_logprobs", 300) or 300)
         self._labels = labels_for_granularity(int(config.verifier.granularity))
+        self._prompt_version = str(
+            getattr(config.verifier, "prompt_version", _PROMPT_VERSION) or _PROMPT_VERSION
+        )
 
     def _body_for(self, candidate_id_: str, task_id: str) -> str:
         with self.catalog.connect() as scoped:
@@ -283,6 +302,7 @@ class DiscreteJudge:
             "labels": list(self._labels),
             "max_tokens": self._max_tokens,
             "top_logprobs": self._top_logprobs,
+            "prompt_version": self._prompt_version,
         }
 
     def _persist(
@@ -387,7 +407,14 @@ class DiscreteJudge:
             task_description = scoped.get_task_instruction(self.exp, task_id) or ""
         body_a = self._body_for(disp_a, task_id)
         body_b = self._body_for(disp_b, task_id)
-        messages = build_messages(task_description, body_a, body_b, criterion, self._labels)
+        messages = build_messages(
+            task_description,
+            body_a,
+            body_b,
+            criterion,
+            self._labels,
+            self._prompt_version,
+        )
         base_payload: dict[str, object] = {
             "model": self.config.verifier.model,
             "messages": messages,

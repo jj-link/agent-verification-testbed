@@ -41,8 +41,9 @@ verifier:
   # forced-token scoring (plan 26 ablation list).
   granularity: 5
   repetitions: 1
-  # top_logprobs uses the frozen code default (300) so the experiment id matches
-  # the generated pool; it is config-driven in the verifier identity.
+  max_tokens: 16
+  top_logprobs: 300
+  prompt_version: score-label-map-v2
 
 rendering:
   max_pair_context_tokens: 120000

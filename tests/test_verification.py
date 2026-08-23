@@ -116,11 +116,25 @@ def test_build_messages_includes_all_parts_no_grader() -> None:
     assert "specification" not in joined or "output" in joined
     # no grader/answer leakage in the template
     assert "reward" not in joined and "pass" not in joined
+    assert "A=1" in joined and "E=5" in joined
+    assert "Any other letter is invalid" in joined
+    assert "1 (poor)" in joined and "5 (excellent)" in joined
 
 
 def test_build_messages_rejects_unknown_criterion() -> None:
     with pytest.raises(ValueError):
         build_messages("t", "a", "b", "nonsense")
+
+
+def test_build_messages_maps_dynamic_labels_and_versions_prompt() -> None:
+    labels = V.labels_for_granularity(20)
+    msgs = build_messages("task", "a", "b", "output", labels)
+    joined = json.dumps(msgs)
+    assert "A=1" in joined and "T=20" in joined
+    assert "20 (excellent)" in joined
+    assert "{A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T}" in joined
+    with pytest.raises(ValueError, match="prompt version"):
+        build_messages("task", "a", "b", "output", labels, "unknown")
 
 
 def test_scores_from_logprobs_picks_highest_prob_label() -> None:
@@ -526,6 +540,7 @@ def test_verifier_max_tokens_configurable(tmp_path: Path, monkeypatch: pytest.Mo
     assert "max_tokens" in judge._verifier_identity()
     assert judge._verifier_identity()["max_tokens"] == 64
     assert ps.status == "SUCCEEDED"
+    assert judge._verifier_identity()["prompt_version"] == "score-label-map-v2"
 
 
 def test_labels_for_granularity() -> None:

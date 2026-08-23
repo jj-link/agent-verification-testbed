@@ -66,6 +66,7 @@ class Verifier:
     repetitions: int
     max_tokens: int = 16
     top_logprobs: int = 300
+    prompt_version: str = "score-label-map-v2"
 
 
 @dataclass(frozen=True)
@@ -157,6 +158,9 @@ def load_config(path: str | Path) -> Config:
             repetitions=_int(ver, "repetitions"),
             max_tokens=_int(ver, "max_tokens") if "max_tokens" in ver else 16,
             top_logprobs=_int(ver, "top_logprobs") if "top_logprobs" in ver else 300,
+            prompt_version=_str(ver, "prompt_version")
+            if "prompt_version" in ver
+            else "score-label-map-v2",
         ),
         storage=Storage(
             root=_str(sto, "root"),
