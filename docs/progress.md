@@ -1119,8 +1119,8 @@ Paired task-bootstrap (20k resamples, seed 42), mean selected-top reward. The
 random arm's uncertainty uses each task's expected random reward (`passing/5`)
 because a uniform random selector spans the pool; the 5/25 row above is the
 single realized seeded draw and is kept only as the observed realization:
-- continuous - expected-random: **+0.232, 95% CI [0.088, 0.384]** (excludes 0; significant)
-- discrete   - expected-random: **+0.232, 95% CI [0.088, 0.384]**
+- continuous - expected-random: **+0.232, 95% CI [0.104, 0.368]** (excludes 0; significant)
+- discrete   - expected-random: **+0.232, 95% CI [0.104, 0.368]**
 - continuous - discrete: 0.000 (identical pass rate)
 
 Full §22/§19 analysis (token/latency medians, verifier accuracy, report) is the
@@ -1132,3 +1132,55 @@ Stage 19 deliverable; this stage closes the run and the local-selector rankings.
   tests pass). Frozen config `8d26942`; progress `7790254`.
 - Next: Stage 18 frontier-assisted ablation (optional, frozen pools only) or
   Stage 19 analyze/publish.
+
+## Stage 19 analyze/publish — in progress
+
+**Status:** analysis and report written; tests/lint/commit/tag/push not yet run
+for this stage. Stage 18 remains deliberately not implemented (permitted
+blocker below).
+
+### Decisions and checks
+
+- Stage 18 frontier-assisted method was NOT run: plan §24 requires an explicit
+  API spending cap and authorization for paid calls; no frontier credentials
+  (only `LOCAL_QWEN_URL`) and no spend cap are configured. This is a permitted
+  blocker, not a failure. Statement (not attribution) left in the report.
+- Statistics follow plan §22: paired task-bootstrap CIs for selector
+  differences; single-selector and pool pass rates bootstrap the 25 per-task
+  outcomes/fractions ("bootstrap tasks"), never individual candidates, and do
+  not binarize fractional values.
+- Verifier per-pair accuracy is computed only on the 42 polarized pairs
+  (official rewards differ) from the stored per-pair responses
+  (`verifications.response_path`/`scores_path`), not the pool-wide aggregate.
+- Analysis is reproducible given the frozen run catalogs: a fresh clone with
+  access to the frozen SQLite catalogs/artifacts under
+  `/home/workbench/avt-data/main-v1` can regenerate `results/figures/*.svg` and
+  `results/stats.json` via
+  `analysis/generate_figures.py` (pure-stdlib, no matplotlib). The raw catalogs
+  live on the workbench and are not in the repo.
+
+### Results (see results/REPORT.md and figures)
+
+- Pool base pass 26/125 = 20.8% (task-fraction CI [9.6%, 34.4%]).
+- discrete & continuous selectors: 11/25 = 44.0% top-pass; random realized
+  5/25 = 20.0%; uniform expected random 20.8%.
+- continuous (and discrete) vs expected-random: **+0.232, 95% CI
+  [0.104, 0.368]**; continuous vs discrete 0.000.
+- Per-pair verifier accuracy on 42 polarized pairs: continuous 42/42 = 1.000,
+  discrete 40/42 = 0.952 (small-n caution).
+- Compute: 68.9M generation input / 473.8k output tokens; generation latency
+  median 88.2 s.
+
+### Deliverables
+
+- `results/REPORT.md`, `results/stats.json`, `results/figures/*.svg`
+  (3 figures, visually verified via browser render).
+- `analysis/generate_figures.py` (reproducible analysis).
+- README results summary + reproduction.
+
+### Release (pending checks/commit/tag/push)
+
+- `experiment-v1.1` is the immutable config freeze.
+- Planned public release tag: `avt-v1.0.0` (contains analysis + results +
+  report + README); reproduction checks it out.
+- Planned mark-complete after tests, lint, commit, and tag push succeed.

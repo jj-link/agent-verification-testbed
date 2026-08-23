@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="460" font-family="DejaVu Sans, Arial, sans-serif" font-size="12">
+<text x="20.0" y="32.0" font-size="14" text-anchor="start" font-weight="bold">Bootstrap: continuous - expected-random selected reward</text>
+<rect x="30.0" y="389.2" width="21.1" height="0.8" fill="#dddddd"/>
+<rect x="50.6" y="387.1" width="21.1" height="2.9" fill="#dddddd"/>
+<rect x="71.2" y="384.8" width="21.1" height="5.2" fill="#dddddd"/>
+<rect x="91.9" y="376.8" width="21.1" height="13.2" fill="#dddddd"/>
+<rect x="112.5" y="363.0" width="21.1" height="27.0" fill="#dddddd"/>
+<rect x="133.1" y="346.8" width="21.1" height="43.2" fill="#4c78a8"/>
+<rect x="153.8" y="317.3" width="21.1" height="72.7" fill="#4c78a8"/>
+<rect x="174.4" y="286.9" width="21.1" height="103.1" fill="#4c78a8"/>
+<rect x="195.0" y="248.4" width="21.1" height="141.6" fill="#4c78a8"/>
+<rect x="215.6" y="211.1" width="21.1" height="178.9" fill="#4c78a8"/>
+<rect x="236.2" y="182.6" width="21.1" height="207.4" fill="#4c78a8"/>
+<rect x="256.9" y="155.6" width="21.1" height="234.4" fill="#4c78a8"/>
+<rect x="277.5" y="149.0" width="21.1" height="241.0" fill="#4c78a8"/>
+<rect x="298.1" y="140.0" width="21.1" height="250.0" fill="#4c78a8"/>
+<rect x="318.8" y="152.3" width="21.1" height="237.7" fill="#4c78a8"/>
+<rect x="339.4" y="192.7" width="21.1" height="197.3" fill="#4c78a8"/>
+<rect x="360.0" y="213.2" width="21.1" height="176.8" fill="#4c78a8"/>
+<rect x="380.6" y="245.5" width="21.1" height="144.5" fill="#4c78a8"/>
+<rect x="401.2" y="282.0" width="21.1" height="108.0" fill="#4c78a8"/>
+<rect x="421.9" y="305.1" width="21.1" height="84.9" fill="#4c78a8"/>
+<rect x="442.5" y="332.3" width="21.1" height="57.7" fill="#4c78a8"/>
+<rect x="463.1" y="351.0" width="21.1" height="39.0" fill="#4c78a8"/>
+<rect x="483.8" y="368.2" width="21.1" height="21.8" fill="#dddddd"/>
+<rect x="504.4" y="375.6" width="21.1" height="14.4" fill="#dddddd"/>
+<rect x="525.0" y="381.9" width="21.1" height="8.1" fill="#dddddd"/>
+<rect x="545.6" y="385.3" width="21.1" height="4.7" fill="#dddddd"/>
+<rect x="566.2" y="388.2" width="21.1" height="1.8" fill="#dddddd"/>
+<rect x="586.9" y="388.6" width="21.1" height="1.4" fill="#dddddd"/>
+<rect x="607.5" y="389.5" width="21.1" height="0.5" fill="#dddddd"/>
+<rect x="628.1" y="389.9" width="21.1" height="0.1" fill="#dddddd"/>
+<rect x="648.8" y="389.9" width="21.1" height="0.1" fill="#dddddd"/>
+<rect x="669.4" y="389.9" width="21.1" height="0.1" fill="#dddddd"/>
+<text x="30.0" y="130.0" font-size="12" text-anchor="start" font-weight="normal">mean 0.232  95% CI [0.104,0.368]</text>
+<line x1="141.7" y1="390.0" x2="141.7" y2="146.0" stroke="#c22" stroke-width="1.4" stroke-dasharray="3,3"/>
+<line x1="476.8" y1="390.0" x2="476.8" y2="146.0" stroke="#c22" stroke-width="1.4" stroke-dasharray="3,3"/>
+<line x1="30.0" y1="390.0" x2="690.0" y2="390.0" stroke="#222" stroke-width="1.4"/>
+</svg>

@@ -1,0 +1,51 @@
+{
+  "pool_base_pass": [
+    0.20800000000000002,
+    0.096,
+    0.344
+  ],
+  "selector_pass": {
+    "random": [
+      0.2,
+      0.04,
+      0.36
+    ],
+    "discrete": [
+      0.44,
+      0.24,
+      0.64
+    ],
+    "continuous": [
+      0.44,
+      0.24,
+      0.64
+    ]
+  },
+  "diff_continuous_expected_random": [
+    0.23199999999999998,
+    0.10400000000000001,
+    0.368
+  ],
+  "diff_discrete_expected_random": [
+    0.23199999999999998,
+    0.10400000000000001,
+    0.368
+  ],
+  "diff_continuous_discrete": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "expected_random_mean": 0.20800000000000002,
+  "verifier": {
+    "polarized_pairs": 42,
+    "per_pair_continuous_accuracy": 1.0,
+    "per_pair_discrete_accuracy": 0.9523809523809523
+  },
+  "compute": {
+    "total_input_tokens": 68923223,
+    "total_output_tokens": 473816,
+    "candidates_with_stats": 125,
+    "gen_latency_median": 88.154336
+  }
+}

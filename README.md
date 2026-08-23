@@ -27,9 +27,24 @@ uv run ruff format --check .
 uv run mypy .
 ```
 
-## Layout
+## Results (main study, `experiment-v1.1`)
 
-`src/avt/` contains the implementation. Terminal-Bench and Harbor integrations,
-experiment definitions, and analysis live under their respective directories as
-stages complete. See [`docs/avt-plan.md`](docs/avt-plan.md) for the full
-structure and methodology.
+25 Terminal-Bench tasks × 5 candidates, verified by a local `qwen3.8-27b-6000pro`
+G=5 judge, ranked by three leakage-safe local selectors on identical frozen pools.
+
+Pool base pass rate: **20.8%** (26/125).
+
+| Selector | Top-pass rate | 95% CI |
+|---|---:|---:|
+| random (uniform expectation) | 20.8% | [9.6%, 34.4%] |
+| discrete (argmax) | 44.0% (11/25) | [24.0%, 64.0%] |
+| continuous (expectation) | 44.0% (11/25) | [24.0%, 64.0%] |
+
+Continuous (and discrete) selected top **+0.232** mean reward over the uniform
+random baseline, task-bootstrap 95% CI **[0.104, 0.368]** (excludes zero). On the
+42 polarized pairs the per-pair verifier accuracy was 1.00 (continuous) and 0.95
+(discrete) — small-n caution applies.
+
+Full report and figures: [`results/REPORT.md`](results/REPORT.md). Regenerate
+with `python analysis/generate_figures.py --config experiments/frozen_main.yaml
+--root /home/workbench/avt-data/main-v1`.
