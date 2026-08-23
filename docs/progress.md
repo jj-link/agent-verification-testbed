@@ -686,3 +686,101 @@ ranking.
 Proceed to Stage 14 (pilot: eight tasks, initially three candidates, reliability
 and cost measured) — this requires the live local Qwen endpoint for
 generation and verification on a new `pilot` pool.
+
+## Stage 14 — Pilot: reliability and cost measured
+
+**Status:** complete (reliability and cost measured; full 8-task offline ranking gated
+on a verifier-coverage finding, recorded as the next blocker). See §21 metrics.
+
+### Work
+
+- Ran the pilot on the `pilot` pool (8 tasks x 3 candidates = 24 candidates,
+  seed 42): generation -> 24 frozen pairs -> discrete verification (72 keys =
+  24 pairs x 3 criteria).
+- Offline candidates were pre-graded in the original run; one controller pass
+  dropped 4 graded `reward 0.0` candidate slots to PERMANENT_FAILED because
+  their trial `result.json` was not yet final at index time. A resume recovered
+  them (no new model calls; all 24 slots SUCCEEDED). Recorded as a
+  controller-recovery finding.
+- Corrected and hardened the discrete judge:
+  - Resumable `verify_all` (skips SUCCEEDED/FAILED keys via
+    `terminal_verification_keys`); a second/partial run makes only missing calls.
+  - Persistently-malformed verification is recorded as `FAILED` (raw response and
+    request artifacts retained) instead of aborting the run, so the plan-§21
+    malformed-output rate is measurable rather than lost.
+  - `verify-pairs` exits nonzero and stays at stage `VERIFYING` (not `VERIFIED`)
+    while any FAILED verification breaks 100% usable coverage.
+- Corrected downstream-accounting exercise (provenance separate for exact vs
+  lower bound below).
+
+### Reliability (generation)
+
+| Metric | Value |
+|---|---|
+| Candidate slots | 24/24 graded (8 tasks x 3) |
+| Passing candidates | 15/24 |
+| Pass@1 | 5/8 = 0.62 |
+| OraclePass@N | 6/8 = 0.75 |
+| Tasks with >=1 pass | distribution-search, git-leak-recovery, password-recovery, prove-plus-comm, rstan-to-pystan, bn-fit-modify |
+| No-pass tasks | make-mips-interpreter, polyglot-c-py |
+
+Per-task rewards: bn-fit-modify 1/3, distribution-search 3/3, git-leak-recovery 3/3,
+make-mips-interpreter 0/3, password-recovery 2/3, polyglot-c-py 0/3, prove-plus-comm 3/3,
+rstan-to-pystan 3/3.
+
+### Reliability (verifier)
+
+| Metric | Value | Provenance |
+|---|---|---|
+| Verification keys | 72 (24 pairs x 3 criteria) | - |
+| SUCCEEDED / FAILED | 71 / 1 | recorded rows |
+| Terminal verification failure rate | 1/72 = 1.4% | persisted FAILED key (polyglot-c-py, specification) |
+| Malformed-output rate (draw-level) | 18/90 = 20% | recorded malformed-draw sum 16 + 2 crash-discarded draws (original run), 88 recorded calls + 2 | 
+
+The 20% malformed-DRAW rate is distinct from the 1.4% terminal failure rate: the
+judge's single plan-15 retry recovers almost all malformed draws; only the polyglot
+specification pair failed both draws and is recorded FAILED (malformed_attempts=2).
+
+### Cost (local inference; not free)
+
+| Metric | Value | Provenance |
+|---|---|---|
+| Generation tokens | 287,609,537 (286,463,357 in / 1,146,180 out) | sum over ALL 34 trial rounds (24 candidate rounds + ~10 retry rounds) |
+| Generation wall time | ~145.6 min | trial started_at..finished_at |
+| Verification tokens | 5,516,085 (5,515,806 prompt / 279 completion) | 72 persisted-final responses; LOWER BOUND, omits the ~18 earlier malformed-draw request tokens (not persisted) |
+| Verification wall time | ~1,675 s (~28 min) | persisted created_at span |
+| Candidates / comparisons per task | 3 candidates, 3 pairs | - |
+
+Generation verification cost is dominated by re-rendering full trajectories into the
+verifier prompt (body budget up to 60k tokens/side; ~5.5M prompt tokens for 72 calls).
+
+### Decisions
+
+- Kept the honest 71/72 result and the single FAILED verification; did NOT reset or
+  re-run to hide it (`record_verification` is immutable; plan forbids silently
+  changing coverage/method).
+- Did NOT change expected-scores/evaluate/rank contracts or "convert" the 8-task pilot
+  into a 7-task analysis. plan §14 (line 433) prescribes failing that ranking job
+  visibly when a pair remains unusable after retries.
+- Verifier robustness (malformed-draw rate, make-mips context exhaustion) is a Stage 15
+  concern to be addressed in a NEW configuration/experiment, not by tuning the frozen
+  pilot pool.
+
+### Blocker / next action
+
+- 100% usable pair coverage failed on {polyglot-c-py, pair 35c8e0f0..., specification};
+  expected-scores / evaluate / rank fail visibly on it (CoverageError), so the full
+  offline chain is gated on resolving verifier malformed handling in a
+  new-configuration experiment before Stage 15 ("score coverage and context remain
+  reliable").
+- Commit SHA: `d14a048` (milestone; docs commit follows).
+
+### Checks
+
+- `uv run pytest -q` — 76 passed; `uv run ruff check .`; `uv run ruff format --check .`;
+  `uv run mypy .` — clean.
+- `avt verify-pairs --config experiments/pilot.yaml` (resume) — 0 new calls,
+  detects pre-existing FAILED, stage=VERIFYING, exit 1.
+- Regression tests: resume makes only missing calls (SUCCEEDED and FAILED skipped);
+  persistent-malformed records FAILED with response artifact; a resumed run does not
+  claim VERIFIED when a FAILED row predates it.
