@@ -955,3 +955,31 @@ G=20 label coverage required two fixes:
 
 Stage 17 — run the main study: 25 tasks x 5 candidates on the frozen `main-v1`
 pool, ranked by all local selectors (no ground truth) with G=20 verification.
+
+## Stage 17 — Main study (in progress; BLOCKED on model server)
+
+**Status:** main-study generation interrupted by an infrastructure failure.
+
+### State
+
+- Generation on `frozen_main.yaml` (25 tasks x 5 = 125 candidates) reached
+  **60/125 SUCCEEDED**, zero failures so far, when the local LMW SGLang model
+  server (port 8000) went down mid-run (curl `000`), and the Docker CLI became
+  unresponsive (`docker ps`/`version` hang). 4 in-flight candidates
+  (mteb-retrieve) were left RUNNING.
+- Generation is resumable: on server restore, `recover_interrupted()` reclaims the
+  4 RUNNING jobs (graded ones accepted via the runner rc-fix), then the remaining
+  ~65 candidates generate. No data loss.
+
+### Blocker (infrastructure)
+
+- Restore the local RTX-6000-pro LMW SGLang server on port 8000 (model
+  `qwen3.8-27b-6000pro`, frozen identity in `frozen_main.yaml`) to resume the main
+  study. Restart command is external to this repo (no launcher committed).
+- After restore: re-run `avt generate --config experiments/frozen_main.yaml` to
+  resume, then build pairs -> G=20 verification -> expected scores -> evaluate ->
+  rank.
+
+### Commits (prior stages)
+
+- Stages 14-16 fully committed and pushed; HEAD = `c101a1d` (tree clean).
