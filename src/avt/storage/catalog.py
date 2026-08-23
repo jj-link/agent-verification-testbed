@@ -505,6 +505,39 @@ class CatalogConnection:
         ).fetchall()
         return {(str(r[0]), int(r[1])) for r in rows}
 
+    def verification_status(self, verification_id_: str) -> str | None:
+        """Status for one exact verifier identity/key, or None if it has not run."""
+        row = self._conn.execute(
+            "SELECT status FROM verifications WHERE verification_id=?",
+            (verification_id_,),
+        ).fetchone()
+        return str(row[0]) if row else None
+
+    def remove_superseded_verifications(
+        self, pair_id: str, current_verification_ids: set[str]
+    ) -> int:
+        """Remove catalog rows for older verifier identities on one pair.
+
+        Verification artifacts remain content-addressed on disk. The catalog is
+        the current experiment view consumed by coverage, expected-score, and
+        ranking stages, so it must not mix prompt/model/output-policy identities.
+        """
+        if not current_verification_ids:
+            cur = self._conn.execute(
+                "DELETE FROM verifications WHERE pair_id=?",
+                (pair_id,),
+            )
+        else:
+            placeholders = ",".join("?" for _ in current_verification_ids)
+            params: tuple[object, ...] = (pair_id, *sorted(current_verification_ids))
+            cur = self._conn.execute(
+                f"DELETE FROM verifications WHERE pair_id=? "
+                f"AND verification_id NOT IN ({placeholders})",
+                params,
+            )
+        self._conn.commit()
+        return cur.rowcount
+
 
 class Catalog:
     """Owns the experiment catalog database file and opens connections."""

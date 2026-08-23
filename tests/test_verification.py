@@ -10,7 +10,8 @@ import pytest
 
 from avt import verification as V
 from avt.config import load_config
-from avt.storage.ids import candidate_id
+from avt.pairs import display_order
+from avt.storage.ids import candidate_id, verification_id
 from avt.verification import (
     DiscreteJudge,
     MalformedVerifier,
@@ -599,3 +600,62 @@ def test_judge_uses_granularity_labels(tmp_path: Path, monkeypatch: pytest.Monke
     ps = judge._verify_pair(pair, "task_x", "output", 0)
     assert ps.score_a == 11 and ps.score_b == 16  # K=11, P=16
     assert judge._verifier_identity()["granularity"] == 20
+
+
+def test_resume_purges_stale_prompt_identities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Old SUCCEEDED/FAILED rows never satisfy or contaminate a new prompt id."""
+    scratch = tmp_path / "scratch"
+    judge = _make(tmp_path)
+    ca, cb = _seed_pair(judge, scratch)
+    pid = _single_pair(judge, scratch, ca, cb)
+    disp_a, disp_b = display_order(ca, cb, judge.config.experiment.seed)
+    display = disp_a + "+" + disp_b
+
+    stale_succeeded = dict(judge._verifier_identity(), prompt_version="score-label-map-v1")
+    stale_failed = dict(judge._verifier_identity(), prompt_version="score-label-map-v0")
+    old_success_id = verification_id(pid, stale_succeeded, "specification", 0, display)
+    old_failed_id = verification_id(pid, stale_failed, "output", 0, display)
+    with judge.catalog.connect() as scoped:
+        scoped.record_verification(
+            old_success_id,
+            pid,
+            "specification",
+            0,
+            display,
+            "SUCCEEDED",
+            None,
+            None,
+            None,
+        )
+        scoped.record_verification(
+            old_failed_id,
+            pid,
+            "output",
+            0,
+            display,
+            "FAILED",
+            None,
+            None,
+            None,
+            malformed_attempts=2,
+        )
+
+    calls: list[dict[str, object]] = []
+
+    def good_post(url: str, payload: dict[str, object], timeout: int = 120) -> dict[str, object]:
+        calls.append(payload)
+        return _response("C", "B")
+
+    monkeypatch.setattr(V, "_post_json", good_post)
+    judge._body_for = lambda cid, task: f"BODY_{cid}"  # type: ignore[assignment]
+    results = judge.verify_all()
+    assert len(calls) == 2
+    assert len(results) == 2
+    assert all(result.status == "SUCCEEDED" for result in results)
+    with judge.catalog.connect() as scoped:
+        assert scoped.verification_status(old_success_id) is None
+        assert scoped.verification_status(old_failed_id) is None
+        assert len(scoped.list_verifications()) == 2
+        assert scoped.get_experiment_stage(judge.exp) == "VERIFIED"

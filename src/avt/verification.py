@@ -493,27 +493,40 @@ class DiscreteJudge:
             if line.strip() and not line.lstrip().startswith("#")
         ]
         results: list[PairScore] = []
+        failed = False
+        verifier_cfg = self._verifier_identity()
         for task in tasks:
             with self.catalog.connect() as scoped:
                 pairs = scoped.list_pairs(self.exp, task)
             for pair in pairs:
-                # Resume: only make model calls for keys without a recorded
-                # terminal (SUCCEEDED or FAILED) outcome.
-                with self.catalog.connect() as scoped:
-                    done = scoped.terminal_verification_keys(str(pair["pair_id"]))
+                pair_id_ = str(pair["pair_id"])
+                ca = str(pair["candidate_a"])
+                cb = str(pair["candidate_b"])
+                disp_a, disp_b = display_order(ca, cb, self.config.experiment.seed)
+                current_ids: dict[tuple[str, int], str] = {}
                 for criterion in self.config.verifier.criteria:
                     for rep in range(self.config.verifier.repetitions):
-                        if (criterion, rep) in done:
-                            continue
-                        results.append(self._verify_pair(pair, task, criterion, rep))
-        # VERIFIED only with full usable coverage. A FAILED (persistently
-        # malformed) verification anywhere in this experiment's pairs removes
-        # coverage; stay VERIFYING so the gap stays visible (plan 14: fail
-        # visibly, never silently degrade coverage). Pool-wide count is used,
-        # not this run's `results`, so a resumed run that executes no new keys
-        # still sees a pre-existing FAILED row.
+                        current_ids[(criterion, rep)] = verification_id(
+                            pair_id_,
+                            verifier_cfg,
+                            criterion,
+                            rep,
+                            disp_a + "+" + disp_b,
+                        )
+                # Clean cutover: stale prompt/model/output-policy identities must
+                # not satisfy resume or contaminate downstream aggregation. The
+                # content-addressed artifacts remain on disk for audit.
+                with self.catalog.connect() as scoped:
+                    scoped.remove_superseded_verifications(pair_id_, set(current_ids.values()))
+                for (criterion, rep), current_vid in current_ids.items():
+                    with self.catalog.connect() as scoped:
+                        status = scoped.verification_status(current_vid)
+                    if status in {"SUCCEEDED", "FAILED"}:
+                        failed = failed or status == "FAILED"
+                        continue
+                    result = self._verify_pair(pair, task, criterion, rep)
+                    results.append(result)
+                    failed = failed or result.status == "FAILED"
         with self.catalog.connect() as scoped:
-            failed = scoped.count_failed_verifications(self.exp)
-        with self.catalog.connect() as scoped:
-            scoped.set_experiment_stage(self.exp, "VERIFIED" if failed == 0 else "VERIFYING")
+            scoped.set_experiment_stage(self.exp, "VERIFYING" if failed else "VERIFIED")
         return results
