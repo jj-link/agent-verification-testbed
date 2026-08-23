@@ -29,7 +29,9 @@ verifier:
     - errors
   granularity: 20
   repetitions: 1
-  top_logprobs: 300
+  # top_logprobs uses the frozen code default (300) so the experiment id is
+  # stable with the generated pool; it is config-driven in the verifier identity.
+
 
 rendering:
   max_pair_context_tokens: 120000

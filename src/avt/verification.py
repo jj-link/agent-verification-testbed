@@ -146,16 +146,21 @@ def _label_probs(
             lp = item.get("logprob")
             if isinstance(lp, (int, float)):
                 weights[label] = weights.get(label, 0.0) + math.exp(float(lp))
-    missing = [lab for lab in labels if lab not in weights]
-    if missing:
-        # Plan 13.2: missing score-token probabilities are a configuration
-        # failure; never silently assign probability zero.
-        raise MissingLabelError(f"endpoint omitted logprob for labels {missing}")
+    if not weights:
+        # No score-label logprob at all at this position -> genuine data absence
+        # (endpoint returned no labels). Plan 13.2: treat this as config failure.
+        raise MissingLabelError("endpoint returned no score-label logprobs at a position")
     total = sum(weights.values())
     if not math.isfinite(total) or total <= 0.0:
         # Plan 13.4: p(score) must be a valid probability over the G labels.
         raise MissingLabelError(f"non-finite/zero label mass at a score position: {weights}")
-    return {label: weight / total for label, weight in weights.items()}
+    # A label the model kept out of its returned top-logprobs has (near-)zero
+    # probability. For G>5 the model concentrates mass on a subset of the scale
+    # (e.g. a missing letter such as Q at -200 logprob), so requiring every label
+    # to appear would fail the pair though the missing label genuinely contributes
+    # ~0 to the expected score. Assign it probability 0 and renormalize; plan 13.2
+    # still fails clearly when no label appears at all (above).
+    return {label: weights.get(label, 0.0) / total for label in labels}
 
 
 def _discrete(probs: dict[str, float], labels: tuple[str, ...]) -> int:

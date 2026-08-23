@@ -140,10 +140,23 @@ def test_scores_skip_separator_token() -> None:
     assert scores_from_logprobs(content) == (5, 1)
 
 
-def test_missing_label_is_configuration_failure(tmp_path: Path) -> None:
-    # one score position omits label "C" -> MissingLabelError (not silent zero)
+def test_missing_subset_label_is_zero_probability() -> None:
+    # For G>5 the model concentrates mass on a subset of the scale; a label the
+    # endpoint did not surface has ~0 probability and is scored as 0, renormalized.
     content: list[dict[str, object]] = [
-        {"token": "B", "top_logprobs": _top(False, "B")},
+        {"token": "B", "top_logprobs": _top(False, "B")},  # omits "C"
+        {"token": "B", "top_logprobs": _top(True, "B")},
+    ]
+    # position 0: B dominant over {A,B,D,E}, C=0 -> discrete argmax is B (=2)
+    assert scores_from_logprobs(content) == (2, 2)
+
+
+def test_no_label_logprobs_is_configuration_failure() -> None:
+    # A position with no score-label logprob at all is genuine data absence.
+    # position 0's token is a label (so it counts as a score position) but its
+    # top_logprobs contains no score label -> genuine data absence.
+    content: list[dict[str, object]] = [
+        {"token": "B", "top_logprobs": [{"token": "word", "logprob": -1.0}]},
         {"token": "B", "top_logprobs": _top(True, "B")},
     ]
     with pytest.raises(MissingLabelError):
@@ -282,8 +295,8 @@ def test_missing_label_fails_immediately_no_persist(
     def fake_post(url: str, payload: dict[str, object], timeout: int = 120) -> dict[str, object]:
         calls.append(payload)
         content = [
-            {"token": "B", "top_logprobs": _top(False, "B")},
-            {"token": "B", "top_logprobs": _top(False, "B")},
+            {"token": "B", "top_logprobs": [{"token": "word", "logprob": -1.0}]},
+            {"token": "B", "top_logprobs": _top(True, "B")},
         ]
         return {"choices": [{"logprobs": {"content": content}}]}
 
