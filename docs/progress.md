@@ -1049,7 +1049,9 @@ and are not reused.
 - Six prior graded smoke trajectories completed within 53 tool calls and 407
   seconds. The corrected freeze uses evidence-based margins:
   `timeout_multiplier: 1.0`, Qwen `maxWallTimeSeconds: 900`,
-  `maxToolCalls: 64`, and `skipLoopDetection: false`.
+  `maxToolCalls: 64`, and `skipLoopDetection: false`. Plan §7 requires one
+  GPU-bound model workload initially, so the corrected freeze also sets
+  `max_parallel: 1`; this is the concurrency exercised by the bounded WSL smoke.
 - A second smoke exposed DrvFS `EIO` while Harbor collected artifacts under
   `/mnt/c`; its automatic retry was stopped and no task container was left.
   Moving storage to native ext4 resolved it.
@@ -1065,13 +1067,13 @@ and are not reused.
   no exception, 206,489 input tokens, and 1,072 output tokens. Catalog:
   1 `SUCCEEDED` candidate, 1 `SUCCEEDED` job.
 - Model doctor: endpoint/model identity/logprobs/G=5 single-token labels all PASS.
-- Corrected `main-v1`: 25 tasks x 5 candidates, G=5, WSL-native storage, experiment
-  id `945140192175d4775e1997f80192a3e6`.
+- Corrected `main-v1`: 25 tasks x 5 candidates, G=5, one local worker,
+  WSL-native storage, experiment id `08802b07cba9e1cbd9fb0b5220cf46bf`.
 - Full WSL gate: **88 tests passed**; ruff check/format and mypy clean.
 
 ### Commit / next action
 
-- Implementation commit: `20a6a9d`.
+- Implementation commit: `974a316`.
 - Repoint `experiment-v1.0`, then generate the fresh 125-candidate main pool from
   `/home/workbench/avt-data/main-v1/`; do not resume the superseded 60-candidate
   Windows/old-config pool.
