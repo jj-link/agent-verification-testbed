@@ -10,7 +10,7 @@
 | Testing server | Run [`MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark`](https://github.com/MiaAI-Lab/Qwen3.8-27B-SGLang-DGX-Spark) on `spark1` for testing; it is acceptable to take down any other server running on `spark1` |
 | Testing checkpoint | Ensure [`RadixArk/Qwen3.8-27B-NVFP4`](https://huggingface.co/RadixArk/Qwen3.8-27B-NVFP4) is available on `spark1`; download it if needed |
 | Initial roles | The same Qwen model acts as both trajectory generator and verifier |
-| Method | Pairwise probabilistic trajectory verification from *LLM-as-a-Verifier* |
+| Method | Pairwise probabilistic trajectory verification from *LLM-as-a-Verifier* ([arXiv:2607.05391](https://arxiv.org/abs/2607.05391v2); PDF copy in `docs/`) |
 | Ground truth | Official Terminal-Bench grader |
 | Initial objective | Determine whether Qwen can select its own successful trajectories better than random or a discrete judge |
 | Later extension | Compare the local verifier with a frontier-assisted verifier |
